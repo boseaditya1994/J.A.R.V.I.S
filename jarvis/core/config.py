@@ -23,6 +23,7 @@ class Settings:
     api_auth_token: str = ""
     vapid_private_key: str = ""
     vapid_public_key: str = ""
+    morning_brief_hour: int = 7
 
 
 def load_settings(env_path: Path | None = None) -> Settings:
@@ -51,4 +52,5 @@ def load_settings(env_path: Path | None = None) -> Settings:
         api_auth_token=os.getenv("API_AUTH_TOKEN", "").strip(),
         vapid_private_key=os.getenv("VAPID_PRIVATE_KEY", "").strip(),
         vapid_public_key=os.getenv("VAPID_PUBLIC_KEY", "").strip(),
+        morning_brief_hour=int(os.getenv("MORNING_BRIEF_HOUR", "7")),
     )

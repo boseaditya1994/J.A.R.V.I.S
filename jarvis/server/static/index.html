@@ -19,10 +19,12 @@
     justify-content: space-between; align-items: center; flex-shrink: 0;
   }
   header h1 { font-size: 1.1rem; margin: 0; }
-  #enableNotifications {
+  header .controls { display: flex; gap: 8px; align-items: center; }
+  #speakToggle {
     background: none; border: 1px solid #5ac8fa; color: #5ac8fa;
     border-radius: 6px; padding: 6px 10px; font-size: 0.8rem; cursor: pointer;
   }
+  #speakToggle.on { background: #5ac8fa; color: #111; }
   #messages { flex: 1; overflow-y: auto; padding: 16px; }
   .msg { max-width: 80%; margin-bottom: 10px; padding: 8px 12px; border-radius: 12px; white-space: pre-wrap; }
   .msg.user { background: #5ac8fa; color: #111; margin-left: auto; }
@@ -43,6 +45,15 @@
     margin-top: 6px; padding: 6px 12px; border-radius: 6px; border: 1px solid #ff6b6b;
     background: none; color: #ff6b6b; cursor: pointer;
   }
+  button.replay {
+    margin-top: 4px; padding: 2px 8px; border-radius: 6px; border: 1px solid #444;
+    background: none; color: #999; cursor: pointer; font-size: 0.8rem;
+  }
+  button.mic {
+    width: 44px; flex-shrink: 0; padding: 10px; border-radius: 8px; border: 1px solid #333;
+    background: #12121e; color: #eee; font-size: 1.1rem; cursor: pointer;
+  }
+  button.mic.listening { background: #ff6b6b; color: #111; border-color: #ff6b6b; }
   #setup {
     position: fixed; inset: 0; background: #1a1a2e; display: flex; flex-direction: column;
     align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center;
@@ -63,18 +74,22 @@
 
 <header>
   <h1>JARVIS</h1>
-  <button id="enableNotifications">Enable notifications</button>
+  <div class="controls">
+    <button id="speakToggle" hidden>Speak: Off</button>
+  </div>
 </header>
 
 <div id="messages"></div>
 
 <form id="composer">
+  <button class="mic" id="micButton" type="button" hidden>🎤</button>
   <input id="input" type="text" placeholder="Message JARVIS..." autocomplete="off">
   <button class="send" type="submit">Send</button>
 </form>
 
 <script>
 const TOKEN_KEY = "jarvis_token";
+const SPEAK_KEY = "jarvis_speak_replies";
 
 function getToken() { return localStorage.getItem(TOKEN_KEY); }
 
@@ -84,10 +99,12 @@ function ensureToken() {
 }
 
 document.getElementById("saveToken").addEventListener("click", () => {
+  unlockSpeechSynthesis();
   const value = document.getElementById("tokenInput").value.trim();
   if (!value) return;
   localStorage.setItem(TOKEN_KEY, value);
   document.getElementById("setup").hidden = true;
+  trySetupNotifications();
 });
 
 const messagesEl = document.getElementById("messages");
@@ -97,8 +114,37 @@ function addMessage(role, text) {
   div.className = "msg " + role;
   div.textContent = text;
   messagesEl.appendChild(div);
+
+  if (role === "assistant" && window.speechSynthesis) {
+    const replay = document.createElement("button");
+    replay.className = "replay";
+    replay.textContent = "🔊 replay";
+    replay.addEventListener("click", () => speakText(text));
+    div.after(replay);
+  }
+
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return div;
+}
+
+function speakText(text) {
+  if (!window.speechSynthesis || !text.trim()) return;
+  window.speechSynthesis.cancel(); // don't stack overlapping utterances
+  window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+}
+
+// Some mobile Chrome builds silently drop speak() calls that don't happen
+// synchronously inside a user-gesture handler — our auto-speak call in
+// sendMessage() fires after an `await` on the network reply, which no
+// longer counts. The fix: speak one silent, empty utterance directly
+// inside a real gesture (composer submit, mic button, speak toggle) once
+// per page load — that "unlocks" the engine, and every later async-
+// triggered speak() call in the same session then plays normally.
+let speechUnlocked = false;
+function unlockSpeechSynthesis() {
+  if (speechUnlocked || !window.speechSynthesis) return;
+  speechUnlocked = true;
+  window.speechSynthesis.speak(new SpeechSynthesisUtterance(""));
 }
 
 async function apiGet(path) {
@@ -138,6 +184,9 @@ async function sendMessage(text) {
   try {
     const data = await apiPost("/chat", { message: text });
     const el = addMessage("assistant", data.reply);
+    if (isSpeakEnabled()) {
+      speakText(data.reply);
+    }
     if (data.needs_confirmation) {
       const btn = document.createElement("button");
       btn.className = "confirm";
@@ -156,12 +205,95 @@ async function sendMessage(text) {
 
 document.getElementById("composer").addEventListener("submit", (event) => {
   event.preventDefault();
+  unlockSpeechSynthesis();
+  trySetupNotifications();
   const input = document.getElementById("input");
   const text = input.value.trim();
   if (!text) return;
   input.value = "";
   sendMessage(text);
 });
+
+// -- Voice output: "speak replies" toggle (Web Speech API SpeechSynthesis) --
+// Default: on — until explicitly toggled off, absence of a stored value
+// means "speak."
+
+const speakToggleBtn = document.getElementById("speakToggle");
+
+function isSpeakEnabled() {
+  const stored = localStorage.getItem(SPEAK_KEY);
+  return stored === null ? true : stored === "on";
+}
+
+function setSpeakToggleUI(on) {
+  speakToggleBtn.textContent = on ? "🔊 Speak: On" : "🔊 Speak: Off";
+  speakToggleBtn.classList.toggle("on", on);
+}
+
+if (window.speechSynthesis) {
+  speakToggleBtn.hidden = false;
+  setSpeakToggleUI(isSpeakEnabled());
+  speakToggleBtn.addEventListener("click", () => {
+    unlockSpeechSynthesis();
+    const nowOn = !isSpeakEnabled();
+    localStorage.setItem(SPEAK_KEY, nowOn ? "on" : "off");
+    setSpeakToggleUI(nowOn);
+  });
+}
+
+// -- Voice input: mic button (Web Speech API SpeechRecognition) -------------
+
+const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+const micButton = document.getElementById("micButton");
+
+if (SpeechRecognitionImpl) {
+  micButton.hidden = false;
+  const recognition = new SpeechRecognitionImpl();
+  recognition.lang = "en-US";
+  recognition.continuous = false;
+  recognition.interimResults = true;
+
+  let listening = false;
+
+  recognition.addEventListener("result", (event) => {
+    const transcript = Array.from(event.results).map((r) => r[0].transcript).join("");
+    document.getElementById("input").value = transcript;
+    if (event.results[event.results.length - 1].isFinal) {
+      recognition.stop();
+    }
+  });
+
+  recognition.addEventListener("end", () => {
+    listening = false;
+    micButton.classList.remove("listening");
+    const input = document.getElementById("input");
+    const text = input.value.trim();
+    if (text) {
+      input.value = "";
+      sendMessage(text);
+    }
+  });
+
+  recognition.addEventListener("error", (event) => {
+    listening = false;
+    micButton.classList.remove("listening");
+    if (event.error !== "no-speech" && event.error !== "aborted") {
+      addMessage("system", "Voice input error: " + event.error);
+    }
+  });
+
+  micButton.addEventListener("click", () => {
+    unlockSpeechSynthesis();
+    trySetupNotifications();
+    if (listening) {
+      recognition.stop();
+      return;
+    }
+    listening = true;
+    micButton.classList.add("listening");
+    recognition.start();
+  });
+}
 
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -170,14 +302,37 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)));
 }
 
-document.getElementById("enableNotifications").addEventListener("click", async () => {
+// Notifications can't be turned on without a browser permission prompt —
+// no site can silently grant itself that (a deliberate anti-spam
+// restriction, not something to route around). Instead of a dedicated
+// button, this rides along on the first genuine user gesture available
+// (saving the token on first-time setup, or the first send/mic tap on a
+// later visit where a token's already saved and that screen never shows),
+// and only runs once per page load. Already-subscribed devices and a
+// previous explicit denial are both handled quietly — no repeated nagging.
+let notificationsAttempted = false;
+
+async function trySetupNotifications() {
+  if (notificationsAttempted) return;
+  if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
+  notificationsAttempted = true;
+
   try {
-    const permission = await Notification.requestPermission();
-    if (permission !== "granted") {
-      addMessage("system", "Notification permission was not granted.");
+    const registration = await navigator.serviceWorker.ready;
+    const existing = await registration.pushManager.getSubscription();
+    if (existing) return; // already enabled on this device
+
+    if (Notification.permission === "denied") {
+      addMessage(
+        "system",
+        "Notifications are blocked for this site — enable them in your browser's site settings if you'd like reminders and briefs pushed here."
+      );
       return;
     }
-    const registration = await navigator.serviceWorker.ready;
+
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") return; // declined just now — stay quiet, don't nag
+
     const { public_key } = await apiGet("/vapid-public-key");
     const subscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
@@ -188,7 +343,7 @@ document.getElementById("enableNotifications").addEventListener("click", async (
   } catch (err) {
     addMessage("system", "Couldn't enable notifications: " + err.message);
   }
-});
+}
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js");

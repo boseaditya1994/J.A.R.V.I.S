@@ -13,6 +13,7 @@ ENV_KEYS = [
     "API_AUTH_TOKEN",
     "VAPID_PRIVATE_KEY",
     "VAPID_PUBLIC_KEY",
+    "MORNING_BRIEF_HOUR",
 ]
 
 
@@ -46,6 +47,7 @@ def test_loads_values_and_applies_defaults(tmp_path):
     assert settings.stt_model == "base"
     assert settings.tts_voice == "en-US-GuyNeural"
     assert settings.max_notifications_per_day == 10
+    assert settings.morning_brief_hour == 7
 
 
 def test_max_notifications_per_day_override(tmp_path):
@@ -58,3 +60,15 @@ def test_max_notifications_per_day_override(tmp_path):
     settings = load_settings(env_path=env_file)
 
     assert settings.max_notifications_per_day == 3
+
+
+def test_morning_brief_hour_override(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "ANTHROPIC_API_KEY=sk-test-123\n"
+        "MORNING_BRIEF_HOUR=9\n"
+    )
+
+    settings = load_settings(env_path=env_file)
+
+    assert settings.morning_brief_hour == 9

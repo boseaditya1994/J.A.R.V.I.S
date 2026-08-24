@@ -11,12 +11,11 @@ arithmetic, read/write files in its own workspace, search and fetch the
 web, run a small set of dev-tool commands, answer questions from
 PDFs/notes/docs you explicitly ingest, produce a structured research
 report on a topic you name, surface a daily brief or a due reminder
-without being asked, and now be reached from your phone or any browser
-over HTTPS, all permission-gated, rate-limited, and audit-logged where it
-matters. No interactive browser/GUI control yet, only one specialized
-agent so far (coding/monitoring agents are deferred — see `docs/ROADMAP.md`
-Phase 5 and Phase 7 for why), and voice isn't available from the web
-client yet (Phase 9 Part 2 candidate — see below). See
+without being asked, and now be reached (by voice or text) from your
+phone or any browser over HTTPS, all permission-gated, rate-limited, and
+audit-logged where it matters. No interactive browser/GUI control yet,
+and only one specialized agent so far (coding/monitoring agents are
+deferred — see `docs/ROADMAP.md` Phase 5 and Phase 7 for why). See
 [`docs/ROADMAP.md`](docs/ROADMAP.md) for what comes next and
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how it fits together.
 
@@ -225,11 +224,11 @@ but it's a convention mismatch worth knowing about if you query
 
 A FastAPI server (`jarvis/server/`) wraps the same `Orchestrator` `cli.py`
 uses, reachable from your phone or any browser over HTTPS via a small
-installable web app (PWA) — chat, memory, and push notifications work
-from anywhere; **HIGH/CRITICAL-risk tools (`filesystem_write`,
-`shell_execute`) are auto-declined from this client** (no synchronous
-human to confirm them over HTTP yet — a real approve-from-your-phone flow
-is deferred), and voice isn't wired up for the web client yet either.
+installable web app (PWA) — chat, memory, voice, and push notifications
+all work from anywhere (see "Voice on the web client" below);
+**HIGH/CRITICAL-risk tools (`filesystem_write`, `shell_execute`) are
+auto-declined from this client** (no synchronous human to confirm them
+over HTTP yet — a real approve-from-your-phone flow is deferred).
 
 **Local dry run first, $0, no real infrastructure needed:**
 
@@ -283,9 +282,9 @@ hit along the way.
    + internet gateway), then redo instance creation selecting that VCN's
    public subnet. **Set the VM's timezone to your own**
    (`sudo timedatectl set-timezone <Region/City>`) — the morning brief's
-   trigger hour (`MORNING_BRIEF_HOUR` isn't yet configurable via `.env`;
-   it defaults to 7 in `jarvis/server/app.py`'s `run_scheduler_once`) is
-   read from the server's local clock, not UTC-adjusted.
+   trigger hour (`MORNING_BRIEF_HOUR` in `.env`, default 7) is read
+   against the server's local clock, not UTC-adjusted, so the timezone
+   has to be right first.
 2. **Open ports 80/443 at *two* separate layers** — both are needed,
    neither implies the other:
    - The cloud firewall: **Networking → Virtual Cloud Networks → your VCN
@@ -352,8 +351,11 @@ hit along the way.
    EOF
    sudo systemctl daemon-reload && sudo systemctl enable --now jarvis
    ```
-8. On your phone, open the site in Chrome, paste the token, tap **Enable
-   notifications**. On Android, also double-check Chrome's *system-level*
+8. On your phone, open the site in Chrome and paste the token — saving it
+   automatically triggers the browser's notification-permission prompt too
+   (there's no separate button; browsers don't allow a site to silently
+   grant itself that permission, so this rides along on that first genuine
+   tap instead). On Android, also double-check Chrome's *system-level*
    notification permission (Settings → Apps → Chrome → Notifications) —
    some OEM battery-management skins silently disable it even after the
    in-page permission prompt is granted. Delivery isn't always instant;
@@ -371,6 +373,42 @@ hit along the way.
 looks like the command hung). `sudo ss -tlnp | grep -E ':80|:443'` confirms
 Caddy is actually listening. A stuck Let's Encrypt request usually means
 one of the two firewall layers in step 2 above isn't actually open yet.
+
+**"Clear & reset" (used above to fix a stale service-worker cache) wipes
+*everything*** — cookies, cache, service worker registration, and
+`localStorage`, where your bearer token lives. If you keep having to
+re-paste the token, you're probably reaching for that instead of a normal
+refresh. A plain reload (pull-to-refresh, the reload icon, or closing and
+reopening the tab) does **not** touch `localStorage` — save "Clear &
+reset" for an actual stuck-cache problem, not routine refreshing.
+
+### Voice on the web client
+
+The mic button (🎤) and "Speak replies" toggle in the web client use the
+browser's built-in **Web Speech API** — not `jarvis/voice/stt.py`/`tts.py`,
+which stay local-only for `cli.py`. This was a deliberate choice over
+porting Whisper to the server: `faster-whisper`'s smallest model alone
+needs more RAM than the whole 1GB VM has to spare. The trade-off: Chrome's
+speech recognition sends audio to Google's servers to transcribe it — not
+self-hosted, unlike this project's usual bias — while speech *synthesis*
+(reading replies aloud) runs fully on-device with no such trade-off.
+
+- Tap 🎤, speak, and it transcribes + sends automatically when you stop
+  talking (same as typing and hitting Send).
+- "Speak replies" (default **on**) reads every new reply aloud; tap the
+  toggle to turn it off. The little "🔊 replay" under any message replays
+  that one on demand regardless of the toggle's state.
+- **Not possible via a web app:** true wake-word activation ("say JARVIS
+  and it opens/listens, like Alexa/Siri") — browsers don't allow a page to
+  keep listening once the tab isn't open in the foreground, and there's no
+  way for a website to register as an OS-level voice service the way real
+  assistants do. That would need a native mobile app, a different project
+  from this one.
+- Only tested on Chromium browsers (Android Chrome, Windows Chrome/Edge).
+  Firefox/Safari have weak or no `SpeechRecognition` support — the mic
+  button and toggle just don't appear there instead of erroring.
+- No server changes, no redeploy beyond copying the updated
+  `index.html` — this feature is 100% client-side.
 
 ## Test
 

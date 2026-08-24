@@ -92,20 +92,19 @@ async def run_scheduler_once(
     client: anthropic.Anthropic,
     notify_fn: Callable[[str, str], None],
     last_morning_brief_date: object | None,
-    morning_brief_hour: int = 7,
 ) -> object | None:
     """One tick of the background scheduler — factored out from the
     infinite loop so it's directly testable. Returns the (possibly updated)
     `last_morning_brief_date` the caller should pass back in next tick.
 
-    `morning_brief_hour` is interpreted in the server's local system clock
-    — set the VM's timezone during setup (see README) rather than doing
-    timezone math here.
+    `settings.morning_brief_hour` is interpreted in the server's local
+    system clock — set the VM's timezone during setup (see README) rather
+    than doing timezone math here.
     """
     await asyncio.to_thread(proactive.run_reminder_check, store, settings, notify_fn)
 
     now = datetime.now()
-    if now.hour == morning_brief_hour and last_morning_brief_date != now.date():
+    if now.hour == settings.morning_brief_hour and last_morning_brief_date != now.date():
         await asyncio.to_thread(proactive.run_morning_brief, client, settings, store, notify_fn)
         last_morning_brief_date = now.date()
 

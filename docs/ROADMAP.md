@@ -604,6 +604,96 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
   project controls. The server-side delivery attempt itself succeeds
   immediately; the device may take a little longer to display it.
 
+## PHASE 9 — Multi-device Assistant (Part 2: Voice for the Web Client) ✅
+- **Objective:** Bring voice input/output to the web client, matching what
+  `cli.py` already does locally.
+- **Supersedes the original plan** written when Part 1 deferred this: the
+  assumption then was "port `jarvis/voice/stt.py`/`tts.py` to run
+  server-side, stream audio over HTTP." Checked two things that ruled that
+  out before writing any code: `faster-whisper`'s smallest ("tiny") model
+  alone needs ~1-1.2GB RAM at inference — not a good fit on the VM's 1GB
+  total, already running FastAPI, Caddy, and Chroma/onnxruntime. The
+  **Web Speech API** (`SpeechRecognition`/`SpeechSynthesis`), built into
+  every Chromium browser — covering both actual devices in use, Android
+  Chrome and Windows Chrome/Edge — runs entirely client-side instead:
+  **zero new server endpoints, zero new server dependencies, zero RAM
+  pressure added to the VM.**
+- **Features:** A mic button (feature-detected, hidden entirely on
+  browsers without `SpeechRecognition`) transcribes speech to the message
+  input and sends it through the existing `/chat` path unchanged — same
+  code as typing. A "Speak replies" toggle in the header, persisted in
+  `localStorage`, reads new assistant replies aloud via `speechSynthesis` —
+  **default on** (changed from an initial default-off design, per explicit
+  user preference, since the goal is closer to a spoken assistant than a
+  silent chat app that occasionally talks). A per-message "🔊 replay"
+  button plays any single reply back on demand regardless of the toggle.
+- **Architecture changes:** None outside `jarvis/server/static/index.html`
+  — no new Python code, no new dependencies, no server redeploy needed for
+  future tweaks, just the static file. `jarvis/voice/stt.py`/`tts.py` and
+  `cli.py`'s local voice path are completely untouched.
+- **Trade-off, stated plainly:** Chrome's `SpeechRecognition` sends audio
+  to Google's servers for processing — not self-hosted, unlike this
+  project's general bias. Given the RAM constraint makes self-hosted
+  Whisper impractical on the current VM, this is the pragmatic choice;
+  self-hosted transcription remains a documented future option if the VM
+  is ever upgraded to the Ampere/ARM shape (6GB) once capacity frees up.
+  `SpeechSynthesis` (output) carries no such trade-off — it runs fully
+  on-device with strong support everywhere.
+- **Known limitation:** no non-Chromium fallback — `SpeechRecognition`
+  support is weak or absent in Firefox/Safari. Not a practical issue given
+  both actual devices are Chromium-based; documented rather than silently
+  glossed over.
+- **Technologies:** Web Speech API (`SpeechRecognition`,
+  `SpeechSynthesis`) — no new npm/pip packages, no build tooling.
+- **Cost:** $0 — no new API usage, no new infrastructure.
+- **Security considerations:** No new attack surface — voice input still
+  flows through the same authenticated `/chat` endpoint as typed text; no
+  audio is ever sent to or stored by the JARVIS server itself.
+- **Acceptance criteria (met):** Verified locally via direct DOM/JS
+  inspection in a real Chromium browser — feature detection correctly
+  shows/hides the mic button and speak toggle, the toggle persists its
+  state and updates its label correctly, clicking it fires with no
+  errors, and a replay button is correctly attached to every assistant
+  message. No Python test changes needed — no server-side code changed.
+- **Two follow-on fixes found via live testing on real devices:**
+  (1) auto-speak worked on desktop Chrome but silently produced no audio
+  on Android Chrome, while the manual "🔊 replay" button worked fine for
+  the same reply — a known mobile-Chrome behavior where `speechSynthesis
+  .speak()` calls made outside the synchronous stack of a user gesture
+  (ours fires after an `await` on the `/chat` network reply) get silently
+  dropped. Fixed by "unlocking" the engine once per page load with a
+  silent, empty utterance spoken directly inside a real gesture (composer
+  submit, mic tap, speak toggle, save-token) — every later async-triggered
+  `speak()` call in that session then plays normally. (2) The
+  "Enable notifications" button was removed entirely — a site can't
+  silently grant itself notification permission (a deliberate anti-spam
+  browser restriction), so the request now rides along on the first
+  genuine gesture available instead (saving the token on first-time
+  setup, or the first send/mic tap on a return visit where a token's
+  already saved and that screen never shows). Already-subscribed devices
+  and a previous explicit denial are both handled quietly, without
+  repeated nagging.
+- **Operational note, not a bug:** "Clear & reset" site data (used earlier
+  to fix a stale service-worker cache) wipes `localStorage` along with
+  everything else, including the saved bearer token — this was mistaken
+  for a token-persistence bug during testing. A normal refresh doesn't
+  touch `localStorage`; see README's "Voice on the web client" section.
+- **Explicitly declined scope: true wake-word activation.** Asked for
+  something like "say JARVIS and the app opens/listens like Alexa/Siri/OK
+  Google" — this is a hard platform wall, not a JARVIS gap: browsers don't
+  let a web page (installed PWA or not) keep the microphone running once
+  the tab isn't open and in the foreground, and there's no way for a
+  website to register itself as an OS-level wake-word/voice-input service
+  the way Siri/Alexa/Google Assistant do (those exist as native OS
+  services, often with dedicated low-power wake-word hardware). Reaching
+  actual wake-word behavior would mean building and shipping a native
+  mobile app with special background/voice-service permissions — a
+  fundamentally different, much larger project than a web client. Given
+  the choice between (a) speaker-on-by-default, (b) a hands-free
+  continuous-listening mode while the app stays open in the foreground,
+  or (c) neither, only (a) was requested — implemented above. (b) remains
+  a well-understood, buildable option if wanted later.
+
 ## PHASE 10 — Advanced Personal AI OS ⬜
 - **Objective:** The "take care of it" vision — broad task understanding,
   planning, tool use, and verification with appropriate autonomy.
