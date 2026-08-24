@@ -102,7 +102,7 @@ def test_morning_brief_skips_when_rate_limit_reached(tmp_path):
 
     proactive.run_morning_brief(
         client, make_settings(max_notifications_per_day=1), store,
-        notify_fn=lambda t, m: notified.append((t, m)),
+        notify_fn=lambda t, m: notified.append((t, m)) or True,
     )
 
     assert notified == []
@@ -120,7 +120,7 @@ def test_reminder_check_only_notifies_due_unnotified_tasks(tmp_path):
     notified = []
 
     proactive.run_reminder_check(
-        store, make_settings(), notify_fn=lambda t, m: notified.append((t, m)),
+        store, make_settings(), notify_fn=lambda t, m: notified.append((t, m)) or True,
         now=datetime.fromisoformat("2026-08-20T12:00:00"),
     )
 
@@ -141,7 +141,7 @@ def test_reminder_check_batches_multiple_due_tasks_into_one_notification(tmp_pat
     notified = []
 
     proactive.run_reminder_check(
-        store, make_settings(), notify_fn=lambda t, m: notified.append((t, m)),
+        store, make_settings(), notify_fn=lambda t, m: notified.append((t, m)) or True,
         now=datetime.fromisoformat("2026-08-20T12:00:00"),
     )
 
@@ -156,8 +156,8 @@ def test_reminder_check_does_not_renotify_on_second_call(tmp_path):
     notified = []
     now = datetime.fromisoformat("2026-08-20T12:00:00")
 
-    proactive.run_reminder_check(store, make_settings(), notify_fn=lambda t, m: notified.append((t, m)), now=now)
-    proactive.run_reminder_check(store, make_settings(), notify_fn=lambda t, m: notified.append((t, m)), now=now)
+    proactive.run_reminder_check(store, make_settings(), notify_fn=lambda t, m: notified.append((t, m)) or True, now=now)
+    proactive.run_reminder_check(store, make_settings(), notify_fn=lambda t, m: notified.append((t, m)) or True, now=now)
 
     assert len(notified) == 1
 
@@ -175,6 +175,35 @@ def test_reminder_check_no_due_tasks_does_not_notify(tmp_path):
     assert notified == []
 
 
+def test_reminder_check_does_not_mark_notified_when_delivery_fails(tmp_path):
+    # Regression test for a real bug found live: notify_fn used to be
+    # allowed to raise on failure, and mark_task_notified only ran if it
+    # didn't — but once notify_fn started catching its own errors (so a
+    # bad push subscription can't crash the scheduler), that safety net
+    # disappeared, and a real delivery failure got silently marked
+    # "notified" and never retried. notify_fn's return value is now what
+    # gates marking, not whether it happened to raise.
+    store = make_store(tmp_path)
+    store.add_task("call Mom", due_at="2026-08-20T09:00:00")
+    notified = []
+
+    proactive.run_reminder_check(
+        store, make_settings(), notify_fn=lambda t, m: notified.append((t, m)) or False,
+        now=datetime.fromisoformat("2026-08-20T12:00:00"),
+    )
+
+    assert len(notified) == 1  # delivery was attempted
+    assert store.list_open_tasks()[0].notified_at is None  # but not marked, since it failed
+
+    # A later successful call should still pick it up and retry.
+    proactive.run_reminder_check(
+        store, make_settings(), notify_fn=lambda t, m: notified.append((t, m)) or True,
+        now=datetime.fromisoformat("2026-08-20T12:00:00"),
+    )
+    assert len(notified) == 2
+    assert store.list_open_tasks()[0].notified_at is not None
+
+
 def test_reminder_check_skips_when_rate_limit_reached(tmp_path):
     store = make_store(tmp_path)
     store.add_task("call Mom", due_at="2026-08-20T09:00:00")
@@ -183,7 +212,7 @@ def test_reminder_check_skips_when_rate_limit_reached(tmp_path):
 
     proactive.run_reminder_check(
         store, make_settings(max_notifications_per_day=1),
-        notify_fn=lambda t, m: notified.append((t, m)),
+        notify_fn=lambda t, m: notified.append((t, m)) or True,
         now=datetime.fromisoformat("2026-08-20T12:00:00"),
     )
 

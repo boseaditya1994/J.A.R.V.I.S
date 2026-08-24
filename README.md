@@ -247,50 +247,130 @@ deploying anywhere.
 # a long random secret the PWA sends on every request
 python -c "import secrets; print(secrets.token_urlsafe(32))"
 
-# a VAPID keypair for self-hosted Web Push (no Firebase/OneSignal)
+# a VAPID keypair for self-hosted Web Push (no Firebase/OneSignal) —
+# prints two bare base64url strings, no PEM armor (pywebpush's key parser
+# only accepts the raw key — see jarvis/server/push.py's docstring for the
+# real bug this fixed)
 uv run python -m jarvis.server.push
 ```
 
 Paste the results into `API_AUTH_TOKEN`, `VAPID_PRIVATE_KEY`, and
-`VAPID_PUBLIC_KEY`. **Never regenerate the VAPID keypair once a device has
-subscribed to push** — it invalidates every existing subscription.
+`VAPID_PUBLIC_KEY` exactly as printed. **Never regenerate the VAPID
+keypair once a device has subscribed to push** — it invalidates every
+existing subscription.
 
 **Deploying for real** (only do this once you're ready to pay for/manage
-real infrastructure — this isn't run automatically):
+real infrastructure — this isn't run automatically). This has actually
+been done once, on Oracle Cloud's Always Free tier — the steps below
+reflect what that real deployment needed, including the friction points
+hit along the way.
 
-1. Provision a VM — [Hetzner](https://www.hetzner.com/cloud/) CPX22
-   (~$9.49/mo, recommended for reliability) or
-   [Oracle Cloud's Always Free tier](https://www.oracle.com/cloud/free/)
-   (genuinely $0/mo, some provisioning friction). **Set the VM's timezone
-   to your own** — the morning brief's trigger hour (`MORNING_BRIEF_HOUR`
-   isn't yet configurable via `.env`; it defaults to 7 in
-   `jarvis/server/app.py`'s `run_scheduler_once`) is read from the
-   server's local clock, not UTC-adjusted.
-2. Copy the project (or just `git clone`) to the VM, `uv sync`, copy your
-   `.env` over (**the whole file, including `ANTHROPIC_API_KEY`** — this
-   VM now needs it too).
-3. Migrate your existing data once: copy `data/memory.db` and
-   `data/chroma/` from this laptop to the same relative path on the VM —
-   the VM becomes the single source of truth from here on; day-to-day use
-   moves to the web client on both your phone and this laptop instead of
-   running `cli.py` locally, so there's only one memory store to keep in
-   sync (i.e., none).
-4. Put [Caddy](https://caddyserver.com/) in front of it for automatic
-   HTTPS — a Caddyfile this simple is enough:
+1. **Provision a VM.** [Hetzner](https://www.hetzner.com/cloud/) CPX22
+   (~$9.49/mo) is the simplest, most reliable option. Oracle Cloud's
+   [Always Free tier](https://www.oracle.com/cloud/free/) is genuinely
+   $0/mo but has real friction: the popular Ampere (ARM, A1.Flex) shape
+   frequently has **no capacity** in single-availability-domain regions
+   (e.g. India South/Hyderabad has only one AD, so there's no fallback AD
+   to retry within the region) — if this happens repeatedly, fall back to
+   the x86 **VM.Standard.E2.1.Micro** shape instead (always has capacity,
+   tighter on RAM at 1GB, but sufficient for a single-user server). Use
+   Ubuntu as the image either way. When creating the instance, if
+   Networking shows "Automatically assign public IPv4 address" as
+   disabled with a warning about needing a public subnet, the inline
+   VCN-creation wizard is buggy — cancel, create the VCN separately via
+   **Networking → Virtual Cloud Networks → Start VCN Wizard → "Create VCN
+   with Internet Connectivity"** (this correctly wires up a public subnet
+   + internet gateway), then redo instance creation selecting that VCN's
+   public subnet. **Set the VM's timezone to your own**
+   (`sudo timedatectl set-timezone <Region/City>`) — the morning brief's
+   trigger hour (`MORNING_BRIEF_HOUR` isn't yet configurable via `.env`;
+   it defaults to 7 in `jarvis/server/app.py`'s `run_scheduler_once`) is
+   read from the server's local clock, not UTC-adjusted.
+2. **Open ports 80/443 at *two* separate layers** — both are needed,
+   neither implies the other:
+   - The cloud firewall: **Networking → Virtual Cloud Networks → your VCN
+     → Security Lists → Default Security List → Add Ingress Rules** — TCP,
+     source `0.0.0.0/0`, destination ports 80 and 443.
+   - The OS-level firewall (Oracle's Ubuntu images block everything but
+     SSH by default via `iptables`, independent of the cloud firewall
+     above):
+     ```bash
+     sudo iptables -L INPUT -n --line-numbers   # find the line number of the REJECT rule first
+     sudo iptables -I INPUT <line-before-REJECT> -p tcp -m state --state NEW --dport 80 -j ACCEPT
+     sudo iptables -I INPUT <line-before-REJECT> -p tcp -m state --state NEW --dport 443 -j ACCEPT
+     sudo netfilter-persistent save
+     ```
+     **The rules must land before the REJECT rule, not after** — inserting
+     at a hardcoded position without checking can land them after it,
+     where they're silently never reached (found live: this produced
+     `ERR_CONNECTION_TIMED_OUT` even with the cloud firewall correctly
+     configured). Re-run `iptables -L INPUT -n --line-numbers` after to
+     confirm the ACCEPT rules for 80/443 appear above REJECT.
+3. **Get a domain pointed at the VM.** Let's Encrypt (which Caddy uses)
+   can't issue a certificate for a bare IP address. If you don't own a
+   domain, [DuckDNS](https://www.duckdns.org) gives a free subdomain
+   (`yourname.duckdns.org`) — sign in, add a subdomain, and manually set
+   its IP to the VM's public IP (DuckDNS defaults to auto-filling *your
+   current browser's* IP, which is wrong here).
+4. Copy the project to the VM (no git remote needed — a zip/scp works
+   fine for a single deploy):
+   ```powershell
+   Compress-Archive -Path jarvis, tests, config, pyproject.toml, uv.lock, README.md, docs, .gitignore -DestinationPath jarvis-deploy.zip -Force
+   scp -i your_key.pem jarvis-deploy.zip ubuntu@<VM_IP>:~/
    ```
-   your-domain-or-ip {
+   Then on the VM: `unzip jarvis-deploy.zip -d ~/jarvis && cd ~/jarvis && uv sync`.
+5. Copy `.env` over too (**the whole file, including `ANTHROPIC_API_KEY`**
+   — this VM now needs it) and migrate your existing data once: `scp` both
+   `.env` and `data/` from this laptop to the VM. The VM becomes the
+   single source of truth from here on; day-to-day use moves to the web
+   client on both your phone and this laptop instead of running `cli.py`
+   locally, so there's only one memory store to keep in sync (i.e., none).
+6. Install [Caddy](https://caddyserver.com/) and put it in front of the
+   app for automatic HTTPS — a Caddyfile this simple is enough:
+   ```
+   your-subdomain.duckdns.org {
        reverse_proxy localhost:8000
    }
    ```
-5. Run the app as a systemd service (`uv run uvicorn jarvis.server.main:app
-   --host 127.0.0.1 --port 8000`), enabled on boot.
-6. On your phone, open the site in Chrome, "Add to Home Screen," open the
-   installed app, paste the token, tap "Enable notifications."
-7. Once a real push notification is confirmed arriving with your laptop
-   off, disable Phase 8's Windows Task Scheduler jobs (`schtasks /change
-   /tn "JARVIS Morning Brief" /disable`, same for "JARVIS Reminder
-   Check") — the server-side scheduler in `jarvis/server/app.py` replaces
-   them, and running both would double-notify you.
+7. Run the app as a systemd service:
+   ```bash
+   sudo tee /etc/systemd/system/jarvis.service <<'EOF'
+   [Unit]
+   Description=JARVIS multi-device server
+   After=network.target
+
+   [Service]
+   Type=simple
+   User=ubuntu
+   WorkingDirectory=/home/ubuntu/jarvis
+   Environment=PATH=/home/ubuntu/.local/bin:/usr/bin:/bin
+   ExecStart=/home/ubuntu/.local/bin/uv run uvicorn jarvis.server.main:app --host 127.0.0.1 --port 8000
+   Restart=on-failure
+
+   [Install]
+   WantedBy=multi-user.target
+   EOF
+   sudo systemctl daemon-reload && sudo systemctl enable --now jarvis
+   ```
+8. On your phone, open the site in Chrome, paste the token, tap **Enable
+   notifications**. On Android, also double-check Chrome's *system-level*
+   notification permission (Settings → Apps → Chrome → Notifications) —
+   some OEM battery-management skins silently disable it even after the
+   in-page permission prompt is granted. Delivery isn't always instant;
+   Android's own Doze/battery optimization can delay when a push actually
+   surfaces, independent of anything this server controls.
+9. Once a real push notification is confirmed arriving on your phone,
+   disable Phase 8's Windows Task Scheduler jobs (`schtasks /change /tn
+   "JARVIS Morning Brief" /disable`, same for "JARVIS Reminder Check") —
+   the server-side scheduler in `jarvis/server/app.py` replaces them, and
+   running both would double-notify you.
+
+**Debugging a stuck deployment:** `sudo journalctl -u jarvis -n 50
+--no-pager` and `sudo journalctl -u caddy -n 50 --no-pager` (add
+`--no-pager` always — the default pager needs `q` to exit and otherwise
+looks like the command hung). `sudo ss -tlnp | grep -E ':80|:443'` confirms
+Caddy is actually listening. A stuck Let's Encrypt request usually means
+one of the two firewall layers in step 2 above isn't actually open yet.
 
 ## Test
 

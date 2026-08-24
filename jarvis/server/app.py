@@ -22,6 +22,7 @@ server actually runs.
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -43,6 +44,8 @@ from jarvis.server.auth import require_auth
 REMINDER_CHECK_INTERVAL_SECONDS = 15 * 60
 STATIC_DIR = Path(__file__).parent / "static"
 
+logger = logging.getLogger(__name__)
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -57,18 +60,28 @@ class PushSubscribeRequest(BaseModel):
     subscription: dict
 
 
-def make_push_notify_fn(store: MemoryStore, settings: Settings) -> Callable[[str, str], None]:
+def make_push_notify_fn(store: MemoryStore, settings: Settings) -> Callable[[str, str], bool]:
     """The server's `notify_fn` for jarvis/interfaces/proactive.py's
     run_morning_brief/run_reminder_check — a drop-in replacement for
     jarvis/interfaces/notify.py's Windows toast. Fans a notification out to
     every subscribed device (phone, laptop browser, ...); a subscription
     that fails to deliver (e.g. expired) is dropped rather than retried
-    forever."""
+    forever.
 
-    def notify(title: str, message: str) -> None:
+    Returns True only if at least one subscription actually received it —
+    proactive.py's run_reminder_check uses this to decide whether to mark a
+    reminder notified, so a real delivery failure (or simply no device
+    subscribed yet) means it stays pending and gets retried next tick,
+    rather than silently vanishing."""
+
+    def notify(title: str, message: str) -> bool:
+        delivered = False
         for subscription in store.list_push_subscriptions():
-            if not push.send_push(subscription, title, message, settings):
+            if push.send_push(subscription, title, message, settings):
+                delivered = True
+            else:
                 store.remove_push_subscription(subscription["endpoint"])
+        return delivered
 
     return notify
 
@@ -110,8 +123,12 @@ async def _scheduler_loop(
             )
         except Exception:
             # A transient failure (network blip, API error) shouldn't kill
-            # the scheduler for the rest of the process's life.
-            pass
+            # the scheduler for the rest of the process's life — but it must
+            # be visible somewhere, or a real bug here is undebuggable (found
+            # live: a reminder was detected and logged, but the task never
+            # got marked notified, because notify_fn raised partway through
+            # and this except swallowed it with zero trace).
+            logger.exception("Scheduler tick failed")
         await asyncio.sleep(REMINDER_CHECK_INTERVAL_SECONDS)
 
 

@@ -18,10 +18,24 @@ end of that same function.
 
 from __future__ import annotations
 
+import logging
 
-def notify(title: str, message: str) -> None:
+logger = logging.getLogger(__name__)
+
+
+def notify(title: str, message: str) -> bool:
+    """Returns True if the toast call completed, False on failure — callers
+    (jarvis/interfaces/proactive.py) use this to decide whether to mark a
+    reminder notified, so a failure gets retried rather than silently
+    dropped."""
     if not message.strip():
-        return
+        return True
+
     from win11toast import toast
 
-    toast(title, message)
+    try:
+        toast(title, message)
+        return True
+    except Exception:
+        logger.exception("win11toast.toast failed")
+        return False

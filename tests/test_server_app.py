@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from jarvis.core import commands
 from jarvis.core.config import Settings
 from jarvis.memory.store import MemoryStore
+from jarvis.server import app as server_app
 from jarvis.server.app import create_app
 
 
@@ -174,3 +175,50 @@ def test_push_subscribe_stores_subscription(tmp_path):
     assert response.status_code == 200
     assert response.json() == {"ok": True}
     assert store.list_push_subscriptions() == [subscription]
+
+
+# -- make_push_notify_fn (Phase 9) -------------------------------------------
+
+
+def test_make_push_notify_fn_returns_true_when_at_least_one_delivery_succeeds(tmp_path, monkeypatch):
+    store = MemoryStore(db_path=tmp_path / "memory.db")
+    store.add_push_subscription({"endpoint": "https://push.example.com/a", "keys": {}})
+    store.add_push_subscription({"endpoint": "https://push.example.com/b", "keys": {}})
+    settings = make_settings()
+
+    results = {"https://push.example.com/a": False, "https://push.example.com/b": True}
+    monkeypatch.setattr(
+        server_app.push, "send_push",
+        lambda subscription, title, message, settings: results[subscription["endpoint"]],
+    )
+
+    notify_fn = server_app.make_push_notify_fn(store, settings)
+    delivered = notify_fn("Title", "Message")
+
+    assert delivered is True
+    # The failing subscription gets dropped, the succeeding one stays.
+    assert store.list_push_subscriptions() == [{"endpoint": "https://push.example.com/b", "keys": {}}]
+
+
+def test_make_push_notify_fn_returns_false_when_all_deliveries_fail(tmp_path, monkeypatch):
+    store = MemoryStore(db_path=tmp_path / "memory.db")
+    store.add_push_subscription({"endpoint": "https://push.example.com/a", "keys": {}})
+    settings = make_settings()
+
+    monkeypatch.setattr(server_app.push, "send_push", lambda *a, **k: False)
+
+    notify_fn = server_app.make_push_notify_fn(store, settings)
+    delivered = notify_fn("Title", "Message")
+
+    assert delivered is False
+    assert store.list_push_subscriptions() == []
+
+
+def test_make_push_notify_fn_returns_false_with_no_subscriptions(tmp_path):
+    store = MemoryStore(db_path=tmp_path / "memory.db")
+    settings = make_settings()
+
+    notify_fn = server_app.make_push_notify_fn(store, settings)
+    delivered = notify_fn("Title", "Message")
+
+    assert delivered is False

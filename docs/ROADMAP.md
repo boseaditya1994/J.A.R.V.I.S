@@ -473,7 +473,7 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
   entry for why credits ran out) — tracked as the one open follow-up for
   this phase, same pattern as Phase 7's closure.
 
-## PHASE 9 — Multi-device Assistant (Part 1) 🚧
+## PHASE 9 — Multi-device Assistant (Part 1) ✅
 - **Objective:** JARVIS is reachable from more than one device.
 - **Scope, this round:** a server + installable web app (PWA) for text
   chat, memory, LOW-risk tools, and push notifications (morning brief +
@@ -507,19 +507,65 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
   `run_morning_brief`/`run_reminder_check` needed zero changes, since their
   `notify_fn` parameter (added in Phase 8) was already the exact injection
   point this needed.
-- **Bug found and fixed via load-testing the dry run (thread-safety, not an
-  API bug):** FastAPI runs synchronous route handlers in a worker
-  threadpool, and the background scheduler's DB access runs via
-  `asyncio.to_thread` — both touch the same `MemoryStore`/sqlite3
-  connection from different threads. sqlite3 connections aren't safe for
-  concurrent cross-thread use; this surfaced immediately as `sqlite3.
-  ProgrammingError: SQLite objects created in a thread can only be used in
-  that same thread` the first time a test exercised more than one request.
-  Fixed with `check_same_thread=False` on the connection
-  (`jarvis/memory/db.py`) plus a `threading.Lock` wrapping every
-  `MemoryStore` method (`jarvis/memory/store.py`) — `cli.py` and
-  `proactive.py` stay single-threaded and pay only the cost of an
-  uncontended lock.
+- **Bugs found and fixed via load-testing the dry run and real live
+  deployment** — five real, distinct issues, none caught by the mocked
+  test suite alone:
+  1. **Thread-safety (not an API bug):** FastAPI runs synchronous route
+     handlers in a worker threadpool, and the background scheduler's DB
+     access runs via `asyncio.to_thread` — both touch the same
+     `MemoryStore`/sqlite3 connection from different threads. sqlite3
+     connections aren't safe for concurrent cross-thread use; this
+     surfaced immediately as `sqlite3.ProgrammingError: SQLite objects
+     created in a thread can only be used in that same thread` the first
+     time a test exercised more than one request. Fixed with
+     `check_same_thread=False` on the connection (`jarvis/memory/db.py`)
+     plus a `threading.Lock` wrapping every `MemoryStore` method
+     (`jarvis/memory/store.py`) — `cli.py` and `proactive.py` stay
+     single-threaded and pay only the cost of an uncontended lock.
+  2. **A CSS bug that silently defeated the PWA's own token-setup flow:**
+     `#setup { display: flex; ... }` in `index.html` unconditionally
+     overrode the browser's default `[hidden] { display: none }` rule
+     (author styles always win over user-agent defaults) — the JS was
+     hiding the element correctly, but it never visually disappeared.
+     Fixed with an explicit `#setup[hidden] { display: none; }` rule.
+  3. **A GET/POST mismatch:** the PWA's `enableNotifications` handler
+     called `apiPost("/vapid-public-key")`, but the server only exposes
+     that endpoint as `GET` (correctly — it's a read, not a mutation) —
+     405 on every attempt. Fixed by adding a proper `apiGet()` client
+     helper instead of loosening the server's method.
+  4. **Stale service-worker cache masking bug #3's fix:** `sw.js` cached
+     the shell on install but never cleaned up an old cache on activate,
+     so a device that had already loaded the buggy `index.html` kept
+     serving it from cache after the server-side fix deployed — same 405
+     resurfaced on Android after it was already fixed on desktop. Fixed by
+     bumping `CACHE_NAME` and deleting any non-current cache in the
+     `activate` handler.
+  5. **The VAPID private key was stored in the wrong format entirely:**
+     `generate_vapid_keys()` produced a full PEM
+     (`-----BEGIN PRIVATE KEY-----...`) with escaped newlines for `.env`
+     storage — but `py_vapid`'s `Vapid.from_string()` (what `pywebpush`
+     calls internally) strips newlines and base64url-decodes the *whole*
+     input string; PEM armor isn't valid base64, so every real push send
+     failed with an opaque `ValueError: ... ASN.1 parsing error: invalid
+     length`, silently swallowed by the scheduler's blanket exception
+     handler with zero visibility. Fixing this required two layers: (a)
+     adding actual logging (`logger.exception(...)` in `push.send_push`
+     and the scheduler loop, plus `logging.basicConfig()` in `main.py`) to
+     even see the real error instead of guessing blind, and (b) switching
+     `generate_vapid_keys()` to produce a bare base64url-encoded raw
+     32-byte key, matching what `py_vapid` actually expects. The existing
+     keypair was re-encoded in place (same public key, so already-created
+     browser subscriptions stayed valid) rather than regenerated.
+     Discovering (a) then surfaced a sixth, subtler bug: once `send_push`
+     stopped raising and started returning `False` on failure, tasks were
+     still being marked notified regardless of that return value — a real
+     delivery failure got silently recorded as "delivered" and never
+     retried. Fixed by changing `NotifyFn`'s contract from
+     `Callable[[str, str], None]` to `Callable[[str, str], bool]`
+     everywhere (`jarvis/interfaces/proactive.py`,
+     `jarvis/interfaces/notify.py`, `jarvis/server/app.py`'s
+     `make_push_notify_fn`) — `run_reminder_check` now only calls
+     `mark_task_notified` if delivery actually succeeded.
 - **Technologies:** FastAPI + Uvicorn (server), `pywebpush`/`py_vapid` (Web
   Push, verified still the standard vendor-free approach), Caddy
   (automatic HTTPS in front of the app, documented setup — not installed
@@ -539,16 +585,24 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
   requires a valid bearer token, checked with a constant-time comparison.
   The token lives in the PWA's `localStorage`, not sent anywhere except
   this server, and never logged.
-- **Acceptance criteria (partially met, real deployment pending):**
-  Verified locally, live, for $0 — `uv run uvicorn jarvis.server.main:app`
-  correctly served chat (with a real Anthropic call), memory recall, the
-  two-step forget-everything flow, and push subscription storage, with
-  clean server logs and no errors. Full test suite (168 tests) covers the
-  auth gate, chat dispatch, confirmation flow, and push delivery logic
-  with fakes/mocks. **Not yet done:** provisioning the actual VM and
-  confirming a real push notification reaches an Android phone with the
-  laptop off — deliberately not automated (a real, billed, hard-to-reverse
-  infrastructure action), tracked as the explicit next step once approved.
+- **Acceptance criteria (met):** Deployed for real to an Oracle Cloud
+  Always Free x86 VM (the ARM shape ran out of capacity in the single-AD
+  Hyderabad region — a known, common Always Free friction point), behind
+  Caddy with a real Let's Encrypt certificate on a DuckDNS subdomain.
+  Verified live: the PWA installed on an Android phone, chat/memory/tools
+  work correctly over HTTPS with bearer-token auth, and — after finding
+  and fixing the five bugs above — a real Web Push notification for a due
+  reminder was successfully delivered to the phone, confirmed by the user
+  directly. The full test suite (175 tests) covers the auth gate, chat
+  dispatch, confirmation flow, push delivery success/failure semantics,
+  and the VAPID key format via the real `py_vapid` parser (not just a
+  mock), so a regression here fails loudly next time rather than silently
+  shipping.
+- **Known, accepted limitation:** delivery to a subscribed device isn't
+  always instant — Android's own battery/Doze management can delay when a
+  push notification actually surfaces, independent of anything this
+  project controls. The server-side delivery attempt itself succeeds
+  immediately; the device may take a little longer to display it.
 
 ## PHASE 10 — Advanced Personal AI OS ⬜
 - **Objective:** The "take care of it" vision — broad task understanding,

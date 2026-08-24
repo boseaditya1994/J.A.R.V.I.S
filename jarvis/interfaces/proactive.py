@@ -22,7 +22,7 @@ from jarvis.interfaces import notify
 from jarvis.memory.store import MemoryStore
 from jarvis.tools import registry
 
-NotifyFn = Callable[[str, str], None]
+NotifyFn = Callable[[str, str], bool]
 
 MAX_ITERATIONS = 5
 _ALLOWED_TOOL_NAMES = {"knowledge_search"}
@@ -125,9 +125,14 @@ def run_reminder_check(
 
     summary = "Reminders due: " + "; ".join(t.text for t in due)
     store.log_notification("reminder_check", summary)
-    notify_fn(f"{settings.jarvis_name} — Reminders", summary)
-    for task in due:
-        store.mark_task_notified(task.id)
+    # Only mark notified if delivery actually succeeded — found live: when
+    # notify_fn swallows its own exceptions (as it now does, since a failed
+    # push must never crash the scheduler), silently marking regardless of
+    # the return value means a real delivery failure gets marked "notified"
+    # and never retried, with the reminder just quietly never arriving.
+    if notify_fn(f"{settings.jarvis_name} — Reminders", summary):
+        for task in due:
+            store.mark_task_notified(task.id)
 
 
 def main(argv: list[str] | None = None) -> None:
