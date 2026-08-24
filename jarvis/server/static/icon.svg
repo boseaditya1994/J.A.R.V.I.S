@@ -1,5 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
-  <rect width="192" height="192" rx="32" fill="#1a1a2e"/>
-  <text x="96" y="132" font-family="system-ui, sans-serif" font-size="110" font-weight="700"
-        text-anchor="middle" fill="#5ac8fa">J</text>
+  <defs>
+    <radialGradient id="core" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#eafcff"/>
+      <stop offset="35%" stop-color="#4dd9ff"/>
+      <stop offset="70%" stop-color="#0a2a33"/>
+      <stop offset="100%" stop-color="#04070c"/>
+    </radialGradient>
+  </defs>
+  <rect width="192" height="192" rx="28" fill="#04070c"/>
+  <circle cx="96" cy="96" r="82" fill="none" stroke="#0d3a45" stroke-width="2"/>
+  <circle cx="96" cy="96" r="66" fill="none" stroke="#155a6b" stroke-width="2"/>
+  <circle cx="96" cy="96" r="48" fill="url(#core)"/>
+  <circle cx="96" cy="96" r="48" fill="none" stroke="#eafcff" stroke-width="2" opacity="0.6"/>
+  <g stroke="#4dd9ff" stroke-width="3" opacity="0.85">
+    <line x1="96" y1="12" x2="96" y2="30"/>
+    <line x1="96" y1="162" x2="96" y2="180"/>
+    <line x1="12" y1="96" x2="30" y2="96"/>
+    <line x1="162" y1="96" x2="180" y2="96"/>
+  </g>
 </svg>

@@ -6,80 +6,182 @@
 <title>JARVIS</title>
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
-<meta name="theme-color" content="#1a1a2e">
+<meta name="theme-color" content="#04070c">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&display=swap" rel="stylesheet">
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    color-scheme: dark;
+    --cyan: #4dd9ff;
+    --cyan-bright: #eafcff;
+    --cyan-dim: #6fa8bf;
+    --cyan-faint: #0d3a45;
+    --bg: #04070c;
+    --panel: rgba(15, 35, 45, 0.45);
+    --red: #ff5450;
+  }
   * { box-sizing: border-box; }
   body {
     margin: 0; height: 100vh; display: flex; flex-direction: column;
-    font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee;
+    font-family: system-ui, sans-serif; color: var(--cyan-bright);
+    background: radial-gradient(ellipse at top, rgba(20, 70, 90, 0.35), transparent 60%), var(--bg);
+    position: relative; overflow: hidden;
   }
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image:
+      linear-gradient(rgba(77, 217, 255, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(77, 217, 255, 0.05) 1px, transparent 1px);
+    background-size: 34px 34px;
+  }
+  .hud-font { font-family: 'Orbitron', system-ui, sans-serif; }
   header {
-    padding: 12px 16px; border-bottom: 1px solid #333; display: flex;
+    padding: 12px 16px; border-bottom: 1px solid var(--cyan-faint); display: flex;
     justify-content: space-between; align-items: center; flex-shrink: 0;
+    position: relative; z-index: 1; background: rgba(4, 10, 14, 0.6); backdrop-filter: blur(4px);
   }
-  header h1 { font-size: 1.1rem; margin: 0; }
+  header .brand { display: flex; align-items: center; gap: 10px; }
+  .arc-reactor {
+    width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+    background: radial-gradient(circle at center, var(--cyan-bright) 0%, var(--cyan) 40%, var(--cyan-faint) 75%, transparent 100%);
+    box-shadow: 0 0 8px 2px var(--cyan), 0 0 16px 4px rgba(77, 217, 255, 0.4);
+    animation: pulse-glow 2.4s ease-in-out infinite;
+  }
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 8px 2px var(--cyan), 0 0 14px 3px rgba(77, 217, 255, 0.35); }
+    50% { box-shadow: 0 0 12px 4px var(--cyan), 0 0 22px 7px rgba(77, 217, 255, 0.55); }
+  }
+  header h1 {
+    font-size: 1.05rem; margin: 0; letter-spacing: 0.12em; font-weight: 700;
+    text-shadow: 0 0 8px rgba(77, 217, 255, 0.6);
+  }
   header .controls { display: flex; gap: 8px; align-items: center; }
   #speakToggle {
-    background: none; border: 1px solid #5ac8fa; color: #5ac8fa;
-    border-radius: 6px; padding: 6px 10px; font-size: 0.8rem; cursor: pointer;
+    font-family: 'Orbitron', system-ui, sans-serif;
+    background: rgba(77, 217, 255, 0.08); border: 1px solid var(--cyan); color: var(--cyan);
+    padding: 6px 12px; font-size: 0.72rem; cursor: pointer; letter-spacing: 0.05em;
+    clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
   }
-  #speakToggle.on { background: #5ac8fa; color: #111; }
-  #messages { flex: 1; overflow-y: auto; padding: 16px; }
-  .msg { max-width: 80%; margin-bottom: 10px; padding: 8px 12px; border-radius: 12px; white-space: pre-wrap; }
-  .msg.user { background: #5ac8fa; color: #111; margin-left: auto; }
-  .msg.assistant { background: #2a2a45; margin-right: auto; }
-  .msg.system { background: transparent; color: #999; font-size: 0.85rem; text-align: center; max-width: 100%; }
-  form#composer {
-    display: flex; gap: 8px; padding: 12px; border-top: 1px solid #333; flex-shrink: 0;
+  #speakToggle.on { background: var(--cyan); color: #04070c; box-shadow: 0 0 10px rgba(77, 217, 255, 0.6); }
+  #messages { flex: 1; overflow-y: auto; padding: 16px; position: relative; z-index: 1; }
+  .msg {
+    max-width: 80%; margin-bottom: 6px; padding: 10px 14px; white-space: pre-wrap;
+    font-size: 0.95rem; line-height: 1.45; border: 1px solid;
+    clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
   }
-  #input {
-    flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid #333;
-    background: #12121e; color: #eee; font-size: 1rem;
+  .msg.user {
+    background: linear-gradient(135deg, rgba(77, 217, 255, 0.20), rgba(77, 217, 255, 0.06));
+    border-color: var(--cyan); color: var(--cyan-bright); margin-left: auto;
+    box-shadow: 0 0 10px rgba(77, 217, 255, 0.2);
   }
-  button.send {
-    padding: 10px 16px; border-radius: 8px; border: none; background: #5ac8fa;
-    color: #111; font-weight: 600; cursor: pointer;
+  .msg.assistant {
+    background: linear-gradient(135deg, rgba(110, 170, 210, 0.12), rgba(20, 40, 55, 0.5));
+    border-color: #2d5b6e; color: var(--cyan-bright); margin-right: auto;
+    box-shadow: 0 0 8px rgba(60, 140, 170, 0.12);
   }
-  button.confirm {
-    margin-top: 6px; padding: 6px 12px; border-radius: 6px; border: 1px solid #ff6b6b;
-    background: none; color: #ff6b6b; cursor: pointer;
+  .msg.system {
+    background: none; border: none; color: var(--cyan-dim); font-family: 'Courier New', monospace;
+    font-size: 0.78rem; text-align: center; max-width: 100%; clip-path: none; margin: 8px 0;
+  }
+  .thinking { display: flex; gap: 6px; padding: 4px 14px 10px; align-items: center; position: relative; z-index: 1; }
+  .thinking[hidden] { display: none; }
+  .thinking .dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 6px var(--cyan);
+    animation: dot-pulse 1.2s ease-in-out infinite;
+  }
+  .thinking .dot:nth-child(2) { animation-delay: 0.2s; }
+  .thinking .dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes dot-pulse {
+    0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); }
+    40% { opacity: 1; transform: scale(1.15); }
   }
   button.replay {
-    margin-top: 4px; padding: 2px 8px; border-radius: 6px; border: 1px solid #444;
-    background: none; color: #999; cursor: pointer; font-size: 0.8rem;
+    margin: 2px 0 8px; padding: 2px 10px; border: 1px solid #2d5b6e;
+    background: none; color: var(--cyan-dim); cursor: pointer; font-size: 0.75rem;
+  }
+  button.confirm {
+    margin: 2px 0 8px; padding: 6px 14px; border: 1px solid var(--red);
+    background: none; color: var(--red); cursor: pointer; font-family: 'Orbitron', system-ui, sans-serif;
+    font-size: 0.75rem; letter-spacing: 0.04em;
+  }
+  form#composer {
+    display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--cyan-faint); flex-shrink: 0;
+    position: relative; z-index: 1; background: rgba(4, 10, 14, 0.6);
+  }
+  #input {
+    flex: 1; padding: 10px 12px; border: 1px solid var(--cyan-faint);
+    background: rgba(8, 18, 24, 0.8); color: var(--cyan-bright); font-size: 1rem;
+    clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  }
+  #input:focus { outline: none; border-color: var(--cyan); }
+  button.send {
+    font-family: 'Orbitron', system-ui, sans-serif; letter-spacing: 0.05em;
+    padding: 10px 18px; border: 1px solid var(--cyan); background: var(--cyan);
+    color: #04070c; font-weight: 700; cursor: pointer;
+    clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
   }
   button.mic {
-    width: 44px; flex-shrink: 0; padding: 10px; border-radius: 8px; border: 1px solid #333;
-    background: #12121e; color: #eee; font-size: 1.1rem; cursor: pointer;
+    width: 46px; flex-shrink: 0; padding: 10px; border: 1px solid var(--cyan-faint);
+    background: rgba(8, 18, 24, 0.8); color: var(--cyan-bright); font-size: 1.1rem; cursor: pointer;
+    clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
   }
-  button.mic.listening { background: #ff6b6b; color: #111; border-color: #ff6b6b; }
+  button.mic.listening {
+    background: rgba(255, 84, 80, 0.15); border-color: var(--red); color: var(--red);
+    animation: mic-pulse 1s ease-in-out infinite;
+  }
+  @keyframes mic-pulse {
+    0%, 100% { box-shadow: 0 0 4px var(--red); }
+    50% { box-shadow: 0 0 16px 4px var(--red); }
+  }
   #setup {
-    position: fixed; inset: 0; background: #1a1a2e; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center;
+    position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; z-index: 2;
   }
   #setup[hidden] { display: none; }
-  #setup input { width: 100%; max-width: 320px; padding: 10px; border-radius: 8px; border: 1px solid #333; background: #12121e; color: #eee; }
-  #setup button { padding: 10px 20px; border-radius: 8px; border: none; background: #5ac8fa; color: #111; font-weight: 600; cursor: pointer; }
+  #setup h2 { font-family: 'Orbitron', system-ui, sans-serif; letter-spacing: 0.08em; text-shadow: 0 0 10px rgba(77, 217, 255, 0.5); }
+  #setup p { color: var(--cyan-dim); max-width: 320px; }
+  #setup input {
+    width: 100%; max-width: 320px; padding: 10px; border: 1px solid var(--cyan-faint);
+    background: rgba(8, 18, 24, 0.8); color: var(--cyan-bright);
+  }
+  #setup input:focus { outline: none; border-color: var(--cyan); }
+  #setup button {
+    font-family: 'Orbitron', system-ui, sans-serif; letter-spacing: 0.05em;
+    padding: 10px 24px; border: 1px solid var(--cyan); background: var(--cyan);
+    color: #04070c; font-weight: 700; cursor: pointer;
+    clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .arc-reactor, .thinking .dot, button.mic.listening { animation: none !important; }
+  }
 </style>
 </head>
 <body>
 
 <div id="setup" hidden>
-  <h2>Connect to JARVIS</h2>
+  <div class="arc-reactor" style="width:48px;height:48px;"></div>
+  <h2>CONNECT TO JARVIS</h2>
   <p>Paste the API token from your server's <code>.env</code> (API_AUTH_TOKEN).</p>
   <input id="tokenInput" type="password" placeholder="Bearer token" autocomplete="off">
   <button id="saveToken">Save</button>
 </div>
 
 <header>
-  <h1>JARVIS</h1>
+  <div class="brand">
+    <div class="arc-reactor"></div>
+    <h1 class="hud-font">J.A.R.V.I.S.</h1>
+  </div>
   <div class="controls">
     <button id="speakToggle" hidden>Speak: Off</button>
   </div>
 </header>
 
 <div id="messages"></div>
+
+<div class="thinking" id="thinking" hidden>
+  <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+</div>
 
 <form id="composer">
   <button class="mic" id="micButton" type="button" hidden>🎤</button>
@@ -108,6 +210,7 @@ document.getElementById("saveToken").addEventListener("click", () => {
 });
 
 const messagesEl = document.getElementById("messages");
+const thinkingEl = document.getElementById("thinking");
 
 function addMessage(role, text) {
   const div = document.createElement("div");
@@ -181,8 +284,10 @@ async function apiPost(path, body) {
 
 async function sendMessage(text) {
   addMessage("user", text);
+  thinkingEl.hidden = false;
   try {
     const data = await apiPost("/chat", { message: text });
+    thinkingEl.hidden = true;
     const el = addMessage("assistant", data.reply);
     if (isSpeakEnabled()) {
       speakText(data.reply);
@@ -199,6 +304,7 @@ async function sendMessage(text) {
       el.after(btn);
     }
   } catch (err) {
+    thinkingEl.hidden = true;
     addMessage("system", err.message);
   }
 }
@@ -226,7 +332,7 @@ function isSpeakEnabled() {
 }
 
 function setSpeakToggleUI(on) {
-  speakToggleBtn.textContent = on ? "🔊 Speak: On" : "🔊 Speak: Off";
+  speakToggleBtn.textContent = on ? "🔊 SPEAK: ON" : "🔊 SPEAK: OFF";
   speakToggleBtn.classList.toggle("on", on);
 }
 

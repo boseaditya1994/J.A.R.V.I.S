@@ -4,7 +4,7 @@
 // Bump CACHE_NAME whenever the shell files change — the activate handler
 // below deletes any other cache, so a stale index.html/manifest/icon never
 // keeps serving from a previous version after this file itself updates.
-const CACHE_NAME = "jarvis-shell-v2";
+const CACHE_NAME = "jarvis-shell-v3";
 const SHELL_FILES = ["/", "/index.html", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
