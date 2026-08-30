@@ -78,6 +78,22 @@ def test_generate_omits_tools_kwarg_when_not_provided():
     assert "tools" not in client.messages.last_kwargs
 
 
+def test_generate_uses_a_high_enough_max_tokens_budget():
+    # Regression test for a real bug found live via the shopping agent: a
+    # turn with several server-side web_search calls piles up thinking +
+    # tool_use + tool_result content against this same budget before any
+    # final text gets written — the old value (1024) was routinely
+    # exhausted, cutting the response off with stop_reason "max_tokens"
+    # and zero text produced. Pinning a floor here, not the exact number,
+    # so raising it further later doesn't require touching this test.
+    client = FakeClient()
+    settings = make_settings()
+
+    router.generate(client, settings, system="sys", messages=[{"role": "user", "content": "hi"}])
+
+    assert client.messages.last_kwargs["max_tokens"] >= 4096
+
+
 def test_extract_text_concatenates_only_text_blocks():
     response = SimpleNamespace(
         content=[

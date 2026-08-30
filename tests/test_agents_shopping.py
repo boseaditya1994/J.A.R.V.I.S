@@ -85,6 +85,20 @@ def test_run_mentions_the_named_shopping_sites_in_the_system_prompt(tmp_path):
         assert site in system_prompt
 
 
+def test_run_caps_search_fanout_in_the_system_prompt(tmp_path):
+    # Regression test for a real bug found live: an unbounded "search every
+    # site" prompt made the model fire off ~10 web_search calls in one turn,
+    # exhausting the response's token budget before it could write any
+    # final text at all (see router.py's max_tokens docstring note).
+    messages = ScriptedMessages([_text_response("# Item\n\nDone.")])
+    client = FakeClient(messages)
+    store = MemoryStore(db_path=tmp_path / "memory.db")
+
+    shopping.run("1kg atta", client, make_settings(), store, confirm=lambda _: True)
+
+    assert "at most 4-5 web searches" in messages.last_kwargs["system"]
+
+
 def test_run_uses_high_complexity(tmp_path):
     messages = ScriptedMessages([_text_response("# Item\n\nDone.")])
     client = FakeClient(messages)

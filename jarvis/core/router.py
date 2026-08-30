@@ -45,6 +45,16 @@ def generate(
     create — required on any follow-up call in the same turn/tool-loop once
     one of those tools has run, or the API rejects the request (see
     jarvis/core/tool_loop.py, which tracks and passes this through).
+
+    `max_tokens=4096`: found live via the shopping agent
+    (jarvis/agents/shopping.py) — a turn that fires off several server-side
+    web_search calls piles up thinking + tool_use + tool_result content
+    against this same budget before any final text gets written, and the
+    old value (1024) was routinely exhausted by even a handful of
+    multi-result searches, cutting the response off at stop_reason
+    "max_tokens" with zero text produced. Billing is by tokens actually
+    generated, not this ceiling, so raising it costs nothing on its own —
+    it only avoids truncating a response that already needed the room.
     """
     model = settings.llm_model_complex if complexity == "high" else settings.llm_model_default
 
@@ -56,7 +66,7 @@ def generate(
 
     return client.messages.create(
         model=model,
-        max_tokens=1024,
+        max_tokens=4096,
         system=system,
         messages=messages,
         **kwargs,

@@ -11,3 +11,4 @@ __pycache__/
 .uvcache/
 data/
 research/
+*.zip
