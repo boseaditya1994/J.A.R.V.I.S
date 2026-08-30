@@ -64,6 +64,13 @@ def test_generate_vapid_keys_round_trips_through_send_push(monkeypatch):
     assert captured["subscription_info"] == subscription
     assert json.loads(captured["data"]) == {"title": "Title", "body": "Body text"}
     assert captured["vapid_private_key"] == private_key
+    # Regression test for a real bug found live: without an explicit
+    # "Urgency: high" header, Android's Doze mode can defer (or never
+    # surface) a push even though the send itself succeeds server-side —
+    # confirmed live on a Pixel 8. ttl>0 lets FCM retry delivery instead of
+    # dropping the message if the device is briefly offline.
+    assert captured["headers"] == {"Urgency": "high"}
+    assert captured["ttl"] > 0
 
 
 def test_send_push_returns_false_and_logs_on_any_exception(monkeypatch, caplog):

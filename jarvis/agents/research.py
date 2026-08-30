@@ -21,6 +21,7 @@ import anthropic
 
 from jarvis.core import tool_loop
 from jarvis.core.config import Settings
+from jarvis.core.time_context import current_datetime_context
 from jarvis.memory.store import MemoryStore
 from jarvis.tools import registry
 
@@ -84,7 +85,7 @@ def run(
     store: MemoryStore,
     confirm: Callable[[str], bool],
 ) -> str:
-    system = SYSTEM_PROMPT_TEMPLATE.format(name=settings.jarvis_name)
+    system = SYSTEM_PROMPT_TEMPLATE.format(name=settings.jarvis_name) + "\n\n" + current_datetime_context()
     messages = [
         {"role": "user", "content": f"Research this topic and produce the report: {topic}"}
     ]

@@ -11,6 +11,7 @@ proper fix for that — not worth chasing with more regex here.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, time as time_cls
 
 from dateparser.search import search_dates
 
@@ -29,10 +30,12 @@ _WHAT_INGESTED_RE = re.compile(
     r"^what (?:have you ingested|documents do you know about)\??$", re.IGNORECASE
 )
 _REMEMBER_RE = re.compile(r"^remember (?:that )?(.+)$", re.IGNORECASE)
+_RECURRING_REMIND_RE = re.compile(r"^remind me every weekday to (.+)$", re.IGNORECASE)
 _REMIND_RE = re.compile(r"^remind me to (.+)$", re.IGNORECASE)
 _WHAT_REMEMBER_RE = re.compile(r"^what do you remember(?: about me)?\??$", re.IGNORECASE)
 _FORGET_RE = re.compile(r"^forget (?:that )?(.+)$", re.IGNORECASE)
 _RESEARCH_RE = re.compile(r"^research (.+)$", re.IGNORECASE)
+_FIND_RE = re.compile(r"^find (.+)$", re.IGNORECASE)
 
 
 def match_research(text: str) -> str | None:
@@ -41,6 +44,17 @@ def match_research(text: str) -> str | None:
     needs the API client and lives there instead. Keeps every command in
     this module free of API calls, so commands.py's tests never need one."""
     match = _RESEARCH_RE.match(text.strip())
+    return match.group(1).strip() if match else None
+
+
+def match_find(text: str) -> str | None:
+    """Same shape as match_research, dispatching to the shopping-compare
+    agent (jarvis/agents/shopping.py) instead. "find" is a common enough
+    word that this will occasionally misfire on unrelated phrasing starting
+    with it — the same accepted trade-off this module's docstring already
+    makes for every other command here: exact anchored phrasing, no LLM
+    judgment call."""
+    match = _FIND_RE.match(text.strip())
     return match.group(1).strip() if match else None
 
 
@@ -69,6 +83,13 @@ def try_handle(text: str, store: MemoryStore) -> str | None:
         fact_text = match.group(1).strip()
         store.add_fact(fact_text)
         return f"Got it — I'll remember that {fact_text}."
+
+    # Checked before the plain _REMIND_RE below — doesn't strictly need to
+    # be first, since "remind me every weekday to X" never matches
+    # _REMIND_RE's "^remind me to" anyway, but keeping recurring-vs-one-time
+    # reminder handling grouped together here is clearer to read.
+    if match := _RECURRING_REMIND_RE.match(text):
+        return _handle_recurring_remind(match.group(1).strip(), store)
 
     if match := _REMIND_RE.match(text):
         return _handle_remind(match.group(1).strip(), store)
@@ -156,6 +177,49 @@ def _handle_remind(task_text: str, store: MemoryStore) -> str:
     return f"Okay, I'll remember to {task_text}.{due_note}"
 
 
+def next_weekday_occurrence(time_of_day: time_cls, now: datetime | None = None) -> datetime:
+    """The next Monday-Friday occurrence of `time_of_day` — today if it's
+    already a weekday and this time hasn't passed yet, otherwise the next
+    weekday. Ignores whatever *date* dateparser guessed when parsing the
+    original request — only the time-of-day matters, since dateparser has
+    no concept of "weekdays only" and would otherwise happily land on a
+    Saturday.
+
+    Public (not underscore-prefixed): jarvis/interfaces/proactive.py reuses
+    this to reschedule a recurring reminder to its next occurrence after
+    each time it fires."""
+    now = now or datetime.now()
+    candidate = now.replace(
+        hour=time_of_day.hour, minute=time_of_day.minute, second=0, microsecond=0
+    )
+    if candidate <= now:
+        candidate += timedelta(days=1)
+    while candidate.weekday() >= 5:  # Saturday=5, Sunday=6
+        candidate += timedelta(days=1)
+    return candidate
+
+
+def _handle_recurring_remind(task_text: str, store: MemoryStore) -> str:
+    try:
+        found = search_dates(task_text, settings={"PREFER_DATES_FROM": "future"})
+    except Exception:
+        found = None
+
+    if not found:
+        return (
+            "I couldn't find a time in that — try something like "
+            '"remind me every weekday to book my shuttle at 8:36 AM".'
+        )
+
+    _, parsed = found[-1]
+    due_at = next_weekday_occurrence(parsed.time())
+    store.add_task(task_text, due_at=due_at.isoformat(timespec="seconds"), recurrence="weekday")
+    return (
+        f"Okay, every weekday at {due_at.strftime('%I:%M %p')} I'll remind you to "
+        f"{task_text}. Next one: {due_at.strftime('%A, %B %d')}."
+    )
+
+
 def _format_memory_summary(store: MemoryStore) -> str:
     facts = store.list_facts()
     tasks = store.list_open_tasks()
@@ -171,5 +235,6 @@ def _format_memory_summary(store: MemoryStore) -> str:
         lines.append("Open tasks:")
         for t in tasks:
             due = f" (due {t.due_at})" if t.due_at else ""
-            lines.append(f"- {t.text}{due}")
+            recurring = " (every weekday)" if t.recurrence == "weekday" else ""
+            lines.append(f"- {t.text}{due}{recurring}")
     return "\n".join(lines)

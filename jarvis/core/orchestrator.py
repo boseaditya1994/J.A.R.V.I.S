@@ -25,9 +25,10 @@ from typing import Callable
 
 import anthropic
 
-from jarvis.agents import research
+from jarvis.agents import research, shopping
 from jarvis.core import commands, router, tool_loop
 from jarvis.core.config import Settings
+from jarvis.core.time_context import current_datetime_context
 from jarvis.memory.store import MemoryStore
 from jarvis.tools import registry
 
@@ -88,6 +89,12 @@ class Orchestrator:
             self.store.log_turn(user_text, reply)
             return reply
 
+        find_item = commands.match_find(user_text)
+        if find_item is not None:
+            reply = self._run_shopping_agent(find_item)
+            self.store.log_turn(user_text, reply)
+            return reply
+
         cmd_reply = commands.try_handle(user_text, self.store)
         if cmd_reply is not None:
             if cmd_reply == commands.FORGET_EVERYTHING:
@@ -145,11 +152,18 @@ class Orchestrator:
         self.store.log_tool_call("filesystem_write", {"path": path}, "high", True, save_result[:200])
         return f"{report}\n\n---\nSaved to {path}"
 
+    def _run_shopping_agent(self, item: str) -> str:
+        # Unlike _run_research_agent, nothing is saved here — prices go
+        # stale within hours, so there's no knowledge-base artifact worth
+        # persisting (see jarvis/agents/shopping.py's module docstring).
+        return shopping.run(item, self.client, self.settings, self.store, self.confirm)
+
     def _system_prompt(self) -> str:
+        parts = [self.base_system_prompt, current_datetime_context()]
         memory_block = _memory_context(self.store)
-        if not memory_block:
-            return self.base_system_prompt
-        return f"{self.base_system_prompt}\n\n{memory_block}"
+        if memory_block:
+            parts.append(memory_block)
+        return "\n\n".join(parts)
 
 
 def _memory_context(store: MemoryStore) -> str:

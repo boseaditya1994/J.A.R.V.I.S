@@ -233,7 +233,57 @@ function addMessage(role, text) {
 function speakText(text) {
   if (!window.speechSynthesis || !text.trim()) return;
   window.speechSynthesis.cancel(); // don't stack overlapping utterances
-  window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+  const utterance = new SpeechSynthesisUtterance(text);
+  const voice = getJarvisVoice();
+  if (voice) utterance.voice = voice;
+  utterance.rate = 0.92; // slightly slower, calmer
+  utterance.pitch = 0.88; // slightly deeper, more measured
+  window.speechSynthesis.speak(utterance);
+}
+
+// Picks the most fitting British-accented male voice already installed on
+// this device (never clones or reproduces any specific performance — only
+// chooses among voices the OS/browser already legitimately ships). Scored,
+// not hardcoded to one name, since available voices vary by device.
+let cachedJarvisVoice = null;
+
+function pickJarvisVoice() {
+  if (!window.speechSynthesis) return null;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices.length) return null;
+
+  const maleHints = ["male", "ryan", "daniel", "james", "arthur", "george", "thomas", "david", "oliver", "brian"];
+  const femaleHints = ["female", "hazel", "susan", "libby", "sonia", "mia", "olivia", "emma", "amy"];
+
+  let best = null;
+  let bestScore = -Infinity;
+  for (const voice of voices) {
+    const lang = voice.lang.toLowerCase();
+    const name = voice.name.toLowerCase();
+    let score = 0;
+    if (lang.startsWith("en-gb")) score += 10;
+    else if (lang.startsWith("en")) score += 2;
+    if (maleHints.some((hint) => name.includes(hint))) score += 5;
+    if (femaleHints.some((hint) => name.includes(hint))) score -= 8;
+    if (score > bestScore) {
+      bestScore = score;
+      best = voice;
+    }
+  }
+  return best;
+}
+
+function getJarvisVoice() {
+  return cachedJarvisVoice;
+}
+
+if (window.speechSynthesis) {
+  cachedJarvisVoice = pickJarvisVoice();
+  // Voice lists often load asynchronously after page load — re-pick once
+  // the browser actually has them.
+  window.speechSynthesis.addEventListener("voiceschanged", () => {
+    cachedJarvisVoice = pickJarvisVoice();
+  });
 }
 
 // Some mobile Chrome builds silently drop speak() calls that don't happen

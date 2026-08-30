@@ -59,7 +59,19 @@ def generate_vapid_keys() -> tuple[str, str]:
 def send_push(subscription: dict, title: str, message: str, settings: Settings) -> bool:
     """Send one Web Push notification. Returns True on success, False if the
     push service rejected it (e.g. the subscription expired) — callers
-    should drop a subscription that keeps failing, not retry forever."""
+    should drop a subscription that keeps failing, not retry forever.
+
+    `headers={"Urgency": "high"}` and a non-zero `ttl` were added after a
+    real live-testing finding: pywebpush defaults to no explicit urgency
+    and `ttl=0` (deliver right now or drop). The push still reached
+    Google's FCM successfully either way, but on Android, Doze mode can
+    defer a non-urgent message indefinitely rather than waking the device
+    — confirmed live on a Pixel 8 (delivered to a laptop instantly, never
+    surfaced on the phone, even though the server-side send genuinely
+    succeeded for both). "Urgency: high" tells FCM/Android to wake the
+    device immediately; the TTL gives it an hour to retry delivery if the
+    device is briefly offline instead of dropping the message outright.
+    """
     payload = json.dumps({"title": title, "body": message})
 
     try:
@@ -68,6 +80,8 @@ def send_push(subscription: dict, title: str, message: str, settings: Settings) 
             data=payload,
             vapid_private_key=settings.vapid_private_key,
             vapid_claims={"sub": VAPID_CLAIMS_SUB},
+            ttl=3600,
+            headers={"Urgency": "high"},
         )
         return True
     except Exception:

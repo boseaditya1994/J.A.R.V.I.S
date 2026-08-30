@@ -163,6 +163,31 @@ by typing this exact command:
   billed web search/fetch usage) — expect it to use meaningfully more of
   your Anthropic API credit than everyday chatting.
 
+### Shopping-compare agent
+
+`find <item>` (`jarvis/agents/shopping.py`) is the same shape as the
+research agent — a scoped agent dispatched only by exact command text, not
+something the main chat LLM can trigger on its own — but purpose-built for
+comparison shopping instead of open research:
+
+- Searches specifically across a fixed shortlist: Amazon, Flipkart, Zepto,
+  Blinkit, Swiggy Instamart, Zomato, BigBasket, Meesho, Nykaa, Myntra, and
+  Toing.
+- Tool access is `web_search` + `web_fetch` only — no `knowledge_search`
+  (this isn't about your own documents) and nothing that writes anything.
+- Produces a short ranked comparison (site, price, pack size/delivery
+  estimate, link) with a reminder that prices/stock on these apps change
+  fast — nothing gets saved to disk, unlike `research`, since a price
+  quote is stale within hours.
+- **Never places an order.** No platform in that shortlist exposes a
+  public order-placement API to third parties — ONDC is the one open
+  protocol built for this, but it gates access behind registering as an
+  approved Network Participant, not something an individual project can
+  do. Even if that gate didn't exist, a purchase is a financial
+  transaction and always needs your own explicit, per-instance
+  confirmation — this agent's job stops at finding and reporting; you buy
+  it yourself, in the app.
+
 ### Proactive notifications (Phase 8)
 
 JARVIS can surface a morning brief and due-reminder nudges without being

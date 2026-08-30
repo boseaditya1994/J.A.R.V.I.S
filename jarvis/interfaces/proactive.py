@@ -17,7 +17,9 @@ from typing import Callable
 import anthropic
 
 from jarvis.core import tool_loop
+from jarvis.core.commands import next_weekday_occurrence
 from jarvis.core.config import Settings, load_settings
+from jarvis.core.time_context import current_datetime_context
 from jarvis.interfaces import notify
 from jarvis.memory.store import MemoryStore
 from jarvis.tools import registry
@@ -93,7 +95,7 @@ def run_morning_brief(
     reply = tool_loop.run_tool_loop(
         client=client,
         settings=settings,
-        system=SYSTEM_PROMPT.format(name=settings.jarvis_name),
+        system=SYSTEM_PROMPT.format(name=settings.jarvis_name) + "\n\n" + current_datetime_context(),
         messages=messages,
         tools=_tools(),
         execute_tool=execute,
@@ -132,7 +134,18 @@ def run_reminder_check(
     # and never retried, with the reminder just quietly never arriving.
     if notify_fn(f"{settings.jarvis_name} — Reminders", summary):
         for task in due:
-            store.mark_task_notified(task.id)
+            if task.recurrence == "weekday":
+                # Reschedule to the next weekday occurrence at the same
+                # time-of-day, rather than marking it done forever — the
+                # whole point of a recurring reminder is that it keeps
+                # firing. Anchored to the task's own stored due_at, not
+                # `now`, so the reminder time doesn't drift later each day
+                # from however late a given scheduler tick happens to run.
+                original_due = datetime.fromisoformat(task.due_at)
+                next_due = next_weekday_occurrence(original_due.time(), now)
+                store.reschedule_task(task.id, next_due.isoformat(timespec="seconds"))
+            else:
+                store.mark_task_notified(task.id)
 
 
 def main(argv: list[str] | None = None) -> None:

@@ -1,3 +1,5 @@
+from datetime import datetime, time
+
 import pytest
 
 from jarvis.core import commands
@@ -57,6 +59,57 @@ def test_remind_me_to_with_time_parses_due_at(store):
     assert "call Mom" in tasks[0].text
     assert tasks[0].due_at is not None
     assert "due" in reply.lower()
+
+
+# -- Recurring reminders --------------------------------------------------
+
+
+def test_next_weekday_occurrence_same_day_if_time_still_upcoming():
+    now = datetime.fromisoformat("2026-08-24T08:00:00")  # a Monday
+    result = commands.next_weekday_occurrence(time(9, 6), now=now)
+
+    assert result == datetime.fromisoformat("2026-08-24T09:06:00")
+
+
+def test_next_weekday_occurrence_next_day_if_time_already_passed():
+    now = datetime.fromisoformat("2026-08-24T10:00:00")  # a Monday, past 9:06
+    result = commands.next_weekday_occurrence(time(9, 6), now=now)
+
+    assert result == datetime.fromisoformat("2026-08-25T09:06:00")  # Tuesday
+
+
+def test_next_weekday_occurrence_skips_weekend():
+    now = datetime.fromisoformat("2026-08-28T20:00:00")  # a Friday evening
+    result = commands.next_weekday_occurrence(time(9, 6), now=now)
+
+    assert result == datetime.fromisoformat("2026-08-31T09:06:00")  # Monday, not Sat/Sun
+
+
+def test_remind_me_every_weekday_stores_recurring_task(store):
+    reply = commands.try_handle("remind me every weekday to book my shuttle at 8:36 AM", store)
+
+    tasks = store.list_open_tasks()
+    assert len(tasks) == 1
+    assert "book my shuttle" in tasks[0].text
+    assert tasks[0].recurrence == "weekday"
+    assert tasks[0].due_at is not None
+    assert "every weekday" in reply.lower()
+
+
+def test_remind_me_every_weekday_without_a_time_asks_for_one(store):
+    reply = commands.try_handle("remind me every weekday to stretch", store)
+
+    assert store.list_open_tasks() == []
+    assert "couldn't find a time" in reply.lower()
+
+
+def test_remind_me_every_weekday_does_not_collide_with_plain_reminder(store):
+    # "remind me every weekday to X" must not also match the plain
+    # "remind me to ..." regex and get double-handled.
+    commands.try_handle("remind me every weekday to book my shuttle at 8:36 AM", store)
+
+    tasks = store.list_open_tasks()
+    assert len(tasks) == 1
 
 
 def test_what_do_you_remember_with_nothing_stored(store):
@@ -228,3 +281,25 @@ def test_match_research_does_not_collide_with_try_handle(store):
     # — but try_handle itself should not also treat "research ..." as some
     # other command (there's no overlapping regex today; this pins that).
     assert commands.try_handle("research quantum computing", store) is None
+
+
+# -- Shopping-compare agent dispatch matcher --------------------------------
+
+
+def test_match_find_extracts_item():
+    assert commands.match_find("find 1kg atta") == "1kg atta"
+
+
+def test_match_find_is_case_insensitive():
+    assert commands.match_find("Find wireless earbuds under 2000") == (
+        "wireless earbuds under 2000"
+    )
+
+
+def test_match_find_non_matching_text_returns_none():
+    assert commands.match_find("what's the weather like today?") is None
+    assert commands.match_find("remember that I like Python") is None
+
+
+def test_match_find_does_not_collide_with_try_handle(store):
+    assert commands.try_handle("find 1kg atta", store) is None

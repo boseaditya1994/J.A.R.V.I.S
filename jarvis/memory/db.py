@@ -85,3 +85,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     existing = {row[1] for row in conn.execute("PRAGMA table_info(tasks)")}
     if "notified_at" not in existing:
         conn.execute("ALTER TABLE tasks ADD COLUMN notified_at TEXT")
+    if "recurrence" not in existing:
+        # NULL = one-time (existing behavior); "weekday" = reschedules
+        # itself to the next Mon-Fri occurrence instead of being marked
+        # notified forever — see jarvis/interfaces/proactive.py's
+        # run_reminder_check.
+        conn.execute("ALTER TABLE tasks ADD COLUMN recurrence TEXT")

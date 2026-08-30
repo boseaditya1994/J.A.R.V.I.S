@@ -32,6 +32,7 @@ class Task:
     created_at: str
     done: bool
     notified_at: str | None = None
+    recurrence: str | None = None  # None = one-time; "weekday" = Mon-Fri recurring
 
 
 def _now() -> str:
@@ -88,25 +89,31 @@ class MemoryStore:
 
     # -- Tasks -----------------------------------------------------------
 
-    def add_task(self, text: str, due_at: str | None = None) -> Task:
+    def add_task(
+        self, text: str, due_at: str | None = None, recurrence: str | None = None
+    ) -> Task:
         text = text.strip()
         created = _now()
         with self._lock:
             cur = self.conn.execute(
-                "INSERT INTO tasks (text, due_at, created_at, done) VALUES (?, ?, ?, 0)",
-                (text, due_at, created),
+                "INSERT INTO tasks (text, due_at, created_at, done, recurrence) VALUES (?, ?, ?, 0, ?)",
+                (text, due_at, created, recurrence),
             )
             self.conn.commit()
-        return Task(id=cur.lastrowid, text=text, due_at=due_at, created_at=created, done=False)
+        return Task(
+            id=cur.lastrowid, text=text, due_at=due_at, created_at=created, done=False,
+            recurrence=recurrence,
+        )
 
     def list_open_tasks(self) -> list[Task]:
         with self._lock:
             rows = self.conn.execute(
-                "SELECT id, text, due_at, created_at, done, notified_at FROM tasks "
+                "SELECT id, text, due_at, created_at, done, notified_at, recurrence FROM tasks "
                 "WHERE done = 0 ORDER BY id"
             ).fetchall()
         return [
-            Task(id=r[0], text=r[1], due_at=r[2], created_at=r[3], done=bool(r[4]), notified_at=r[5])
+            Task(id=r[0], text=r[1], due_at=r[2], created_at=r[3], done=bool(r[4]),
+                 notified_at=r[5], recurrence=r[6])
             for r in rows
         ]
 
@@ -118,13 +125,14 @@ class MemoryStore:
         docs/ROADMAP.md Phase 8)."""
         with self._lock:
             rows = self.conn.execute(
-                "SELECT id, text, due_at, created_at, done, notified_at FROM tasks "
+                "SELECT id, text, due_at, created_at, done, notified_at, recurrence FROM tasks "
                 "WHERE done = 0 AND notified_at IS NULL "
                 "AND due_at IS NOT NULL AND due_at <= ? ORDER BY due_at",
                 (now_iso,),
             ).fetchall()
         return [
-            Task(id=r[0], text=r[1], due_at=r[2], created_at=r[3], done=bool(r[4]), notified_at=r[5])
+            Task(id=r[0], text=r[1], due_at=r[2], created_at=r[3], done=bool(r[4]),
+                 notified_at=r[5], recurrence=r[6])
             for r in rows
         ]
 
@@ -132,6 +140,18 @@ class MemoryStore:
         with self._lock:
             self.conn.execute(
                 "UPDATE tasks SET notified_at = ? WHERE id = ?", (_now(), task_id)
+            )
+            self.conn.commit()
+
+    def reschedule_task(self, task_id: int, new_due_at: str) -> None:
+        """For a recurring task: move it to its next occurrence and clear
+        notified_at, so list_due_unnotified_tasks picks it up again once
+        the new due_at passes — instead of mark_task_notified's permanent
+        "done for good" (used for one-time reminders)."""
+        with self._lock:
+            self.conn.execute(
+                "UPDATE tasks SET due_at = ?, notified_at = NULL WHERE id = ?",
+                (new_due_at, task_id),
             )
             self.conn.commit()
 

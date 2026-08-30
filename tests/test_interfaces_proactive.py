@@ -65,6 +65,16 @@ def test_morning_brief_uses_only_scoped_tools(tmp_path):
     assert "calculator" not in tool_names
 
 
+def test_morning_brief_system_prompt_includes_current_datetime(tmp_path):
+    messages = ScriptedMessages([_text_response("Good morning! Nothing urgent today.")])
+    client = FakeClient(messages)
+    store = make_store(tmp_path)
+
+    proactive.run_morning_brief(client, make_settings(), store, notify_fn=lambda t, m: None)
+
+    assert "Current date and time:" in messages.last_kwargs["system"]
+
+
 def test_morning_brief_uses_haiku_complexity(tmp_path):
     messages = ScriptedMessages([_text_response("Good morning!")])
     client = FakeClient(messages)
@@ -202,6 +212,73 @@ def test_reminder_check_does_not_mark_notified_when_delivery_fails(tmp_path):
     )
     assert len(notified) == 2
     assert store.list_open_tasks()[0].notified_at is not None
+
+
+# -- Recurring reminders (Phase 9 Part 3) -----------------------------------
+
+
+def test_reminder_check_reschedules_recurring_task_instead_of_marking_done(tmp_path):
+    store = make_store(tmp_path)
+    task = store.add_task(
+        "book shuttle", due_at="2026-08-24T08:36:00", recurrence="weekday"
+    )  # a Monday
+    notified = []
+
+    proactive.run_reminder_check(
+        store, make_settings(), notify_fn=lambda t, m: notified.append((t, m)) or True,
+        now=datetime.fromisoformat("2026-08-24T08:45:00"),
+    )
+
+    assert len(notified) == 1
+    updated = store.list_open_tasks()[0]
+    # Still "open" (not marked notified forever) — rescheduled to the next
+    # weekday at the same time-of-day instead.
+    assert updated.notified_at is None
+    assert updated.due_at == "2026-08-25T08:36:00"  # Tuesday, same time
+    assert updated.recurrence == "weekday"
+
+
+def test_reminder_check_recurring_task_skips_weekend_when_rescheduling(tmp_path):
+    store = make_store(tmp_path)
+    store.add_task(
+        "book shuttle", due_at="2026-08-28T08:36:00", recurrence="weekday"
+    )  # a Friday
+    notified = []
+
+    proactive.run_reminder_check(
+        store, make_settings(), notify_fn=lambda t, m: notified.append((t, m)) or True,
+        now=datetime.fromisoformat("2026-08-28T08:45:00"),
+    )
+
+    updated = store.list_open_tasks()[0]
+    assert updated.due_at == "2026-08-31T08:36:00"  # Monday, not Sat/Sun
+
+
+def test_reminder_check_recurring_task_fires_again_after_reschedule(tmp_path):
+    store = make_store(tmp_path)
+    store.add_task(
+        "book shuttle", due_at="2026-08-24T08:36:00", recurrence="weekday"
+    )
+    notified = []
+    notify_fn = lambda t, m: notified.append((t, m)) or True  # noqa: E731
+
+    proactive.run_reminder_check(
+        store, make_settings(), notify_fn=notify_fn,
+        now=datetime.fromisoformat("2026-08-24T08:45:00"),
+    )
+    # Not due again yet, later the same day.
+    proactive.run_reminder_check(
+        store, make_settings(), notify_fn=notify_fn,
+        now=datetime.fromisoformat("2026-08-24T18:00:00"),
+    )
+    assert len(notified) == 1
+
+    # Due again the next morning, at the rescheduled time.
+    proactive.run_reminder_check(
+        store, make_settings(), notify_fn=notify_fn,
+        now=datetime.fromisoformat("2026-08-25T08:45:00"),
+    )
+    assert len(notified) == 2
 
 
 def test_reminder_check_skips_when_rate_limit_reached(tmp_path):

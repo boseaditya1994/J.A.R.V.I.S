@@ -94,6 +94,27 @@ def test_system_prompt_includes_previously_stored_facts(tmp_path):
     assert "allergic to peanuts" in system_prompt
 
 
+def test_system_prompt_includes_current_datetime(tmp_path):
+    # Regression test for a real gap found live: asked "what's the date
+    # and time now?", JARVIS could answer the date (guessed from training
+    # data) but admitted it had no access to the actual time of day.
+    orchestrator, _ = make_orchestrator(tmp_path)
+
+    orchestrator.handle_turn("what time is it?")
+
+    system_prompt = orchestrator.client.messages.last_kwargs["system"]
+    assert "Current date and time:" in system_prompt
+
+
+def test_system_prompt_includes_datetime_even_with_no_stored_facts(tmp_path):
+    orchestrator, _ = make_orchestrator(tmp_path)
+
+    orchestrator.handle_turn("hello")
+
+    system_prompt = orchestrator.client.messages.last_kwargs["system"]
+    assert "Current date and time:" in system_prompt
+
+
 def test_forget_everything_bubbles_up_sentinel_without_deleting(tmp_path):
     orchestrator, store = make_orchestrator(tmp_path)
     store.add_fact("allergic to peanuts")
@@ -369,5 +390,60 @@ def test_research_command_does_not_ask_for_confirmation(tmp_path, monkeypatch):
     )
 
     orchestrator.handle_turn("research quantum computing")
+
+    assert confirm_calls == []
+
+
+# -- Shopping-compare agent dispatch -----------------------------------------
+
+
+def test_find_command_dispatches_to_shopping_agent(tmp_path, monkeypatch):
+    orchestrator, store = make_orchestrator(tmp_path)
+
+    captured = {}
+
+    def fake_run(item, client, settings, store_arg, confirm):
+        captured["item"] = item
+        return "# 1kg Atta\n\n## Options found\n- **Amazon** — ₹300"
+
+    monkeypatch.setattr("jarvis.core.orchestrator.shopping.run", fake_run)
+
+    reply = orchestrator.handle_turn("find 1kg atta")
+
+    assert captured["item"] == "1kg atta"
+    assert orchestrator.client.messages.call_count == 0  # agent path, not the main loop
+    assert reply == "# 1kg Atta\n\n## Options found\n- **Amazon** — ₹300"
+
+    row = store.conn.execute(
+        "SELECT user_text, assistant_text FROM episodic_log"
+    ).fetchone()
+    assert row == ("find 1kg atta", reply)
+
+
+def test_find_command_does_not_save_anything(tmp_path, monkeypatch):
+    # Unlike research, a price comparison is never written to disk — see
+    # jarvis/agents/shopping.py's module docstring.
+    monkeypatch.setenv("TOOLS_WORKSPACE_DIR", str(tmp_path))
+    orchestrator, store = make_orchestrator(tmp_path)
+    monkeypatch.setattr(
+        "jarvis.core.orchestrator.shopping.run", lambda *a, **k: "a comparison"
+    )
+
+    orchestrator.handle_turn("find 1kg atta")
+
+    assert store.conn.execute("SELECT COUNT(*) FROM tool_audit_log").fetchone()[0] == 0
+    assert list((tmp_path).glob("**/*.md")) == []
+
+
+def test_find_command_does_not_ask_for_confirmation(tmp_path, monkeypatch):
+    confirm_calls = []
+    orchestrator, _ = make_orchestrator(
+        tmp_path, confirm=lambda p: confirm_calls.append(p) or False
+    )
+    monkeypatch.setattr(
+        "jarvis.core.orchestrator.shopping.run", lambda *a, **k: "a comparison"
+    )
+
+    orchestrator.handle_turn("find 1kg atta")
 
     assert confirm_calls == []

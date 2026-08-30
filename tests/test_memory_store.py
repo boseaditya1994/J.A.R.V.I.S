@@ -180,3 +180,71 @@ def test_connect_adds_notified_at_column_to_preexisting_tasks_table(tmp_path):
     columns = {row[1] for row in store.conn.execute("PRAGMA table_info(tasks)")}
     assert "notified_at" in columns
     assert store.list_open_tasks()[0].notified_at is None
+
+
+def test_connect_adds_recurrence_column_to_preexisting_tasks_table(tmp_path):
+    db_path = tmp_path / "memory.db"
+    raw = sqlite3.connect(db_path)
+    raw.execute(
+        "CREATE TABLE tasks (id INTEGER PRIMARY KEY, text TEXT NOT NULL, "
+        "due_at TEXT, created_at TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0, "
+        "notified_at TEXT)"
+    )
+    raw.execute(
+        "INSERT INTO tasks (id, text, created_at, done) VALUES (1, 'old task', 'x', 0)"
+    )
+    raw.commit()
+    raw.close()
+
+    store = MemoryStore(db_path=db_path)  # must not raise
+
+    columns = {row[1] for row in store.conn.execute("PRAGMA table_info(tasks)")}
+    assert "recurrence" in columns
+    assert store.list_open_tasks()[0].recurrence is None
+
+
+# -- Recurring reminders (Phase 9 Part 3) -----------------------------------
+
+
+def test_add_task_with_recurrence(tmp_path):
+    store = make_store(tmp_path)
+
+    task = store.add_task("book shuttle", due_at="2026-08-24T08:36:00", recurrence="weekday")
+
+    assert task.recurrence == "weekday"
+    assert store.list_open_tasks()[0].recurrence == "weekday"
+
+
+def test_add_task_without_recurrence_defaults_to_none(tmp_path):
+    store = make_store(tmp_path)
+
+    task = store.add_task("buy milk")
+
+    assert task.recurrence is None
+
+
+def test_reschedule_task_updates_due_at_and_clears_notified_at(tmp_path):
+    store = make_store(tmp_path)
+    task = store.add_task("book shuttle", due_at="2026-08-24T08:36:00", recurrence="weekday")
+    store.mark_task_notified(task.id)
+    assert store.list_open_tasks()[0].notified_at is not None
+
+    store.reschedule_task(task.id, "2026-08-25T08:36:00")
+
+    updated = store.list_open_tasks()[0]
+    assert updated.due_at == "2026-08-25T08:36:00"
+    assert updated.notified_at is None
+
+
+def test_rescheduled_task_is_picked_up_again_by_list_due_unnotified_tasks(tmp_path):
+    store = make_store(tmp_path)
+    task = store.add_task("book shuttle", due_at="2026-08-24T08:36:00", recurrence="weekday")
+    store.mark_task_notified(task.id)
+    store.reschedule_task(task.id, "2026-08-25T08:36:00")
+
+    # Not due yet relative to a time before the new due_at.
+    assert store.list_due_unnotified_tasks("2026-08-24T12:00:00") == []
+    # Due once the new due_at has passed.
+    due = store.list_due_unnotified_tasks("2026-08-25T09:00:00")
+    assert len(due) == 1
+    assert due[0].id == task.id
