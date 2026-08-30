@@ -115,6 +115,22 @@ def test_system_prompt_includes_datetime_even_with_no_stored_facts(tmp_path):
     assert "Current date and time:" in system_prompt
 
 
+def test_system_prompt_nudges_toward_searching_named_entities(tmp_path):
+    # Regression test for a real bug found live: asked "what do you know
+    # about <a real restaurant>?" (or just the bare name), the model
+    # answered from its own memory, found nothing, and asked the user for
+    # more context (location, cuisine) instead of trying web_search first
+    # — even though the same restaurant, asked about with phrasing like
+    # "search about ..." or "tell me about ...", was found immediately by
+    # a live web_search call with no location needed at all.
+    orchestrator, _ = make_orchestrator(tmp_path)
+
+    orchestrator.handle_turn("what do you know about some restaurant?")
+
+    system_prompt = orchestrator.client.messages.last_kwargs["system"]
+    assert "use web_search before asking them for more identifying details" in system_prompt
+
+
 def test_forget_everything_bubbles_up_sentinel_without_deleting(tmp_path):
     orchestrator, store = make_orchestrator(tmp_path)
     store.add_fact("allergic to peanuts")
